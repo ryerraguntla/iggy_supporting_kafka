@@ -18,11 +18,14 @@ pub struct ResponseHeader {
 
 impl RequestHeader {
     pub fn decode(bytes: Bytes, header_version: i16) -> Result<Self> {
+        let mut d = Decoder::new(bytes);
+        Self::decode_from(&mut d, header_version)
+    }
+
+    pub fn decode_from(d: &mut Decoder, header_version: i16) -> Result<Self> {
         if header_version != 1 && header_version != 2 {
             return Err(KafkaProtocolError::UnsupportedHeaderVersion(header_version));
         }
-
-        let mut d = Decoder::new(bytes);
         let api_key = d.read_i16()?;
         let api_version = d.read_i16()?;
         let correlation_id = d.read_i32()?;

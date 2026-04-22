@@ -10,6 +10,7 @@ Reference repository for planning and implementing Kafka protocol compatibility 
 - `docs/v1-implementation-checklist-by-module.md`: execution-ordered build checklist for Kafka facade V1.
 - `docs/v1-status.md`: live status board with prioritized "start here now" tasks.
 - `docs/standalone-testing-with-kafka-tools.md`: run/test instructions with Kafka and Confluent CLI tools.
+- `docs/manual-testing-playbook.md`: comprehensive manual testing workflow and expected outcomes.
 
 ## Standalone Rust Code
 

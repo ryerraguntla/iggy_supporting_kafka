@@ -5,9 +5,12 @@ This project currently implements:
 - TCP listener with Kafka length-prefixed framing
 - request header decode (`api_key`, `api_version`, `correlation_id`, `client_id`)
 - response header encode (`correlation_id`)
+- minimal API routing for:
+  - `ApiVersions` (key 18)
+  - `Metadata` (key 3)
 - bounded frame size and read/write timeout controls
 
-It does not yet implement full Kafka API handlers (Produce/Fetch/etc), so producer/consumer commands will connect but not complete end-to-end semantics.
+It does not yet implement full runtime API handlers (Produce/Fetch/etc), so producer/consumer commands will connect but not complete end-to-end semantics.
 
 ## 1) Build and test locally
 
@@ -30,7 +33,7 @@ Expected behavior for this foundation stage:
 
 - Tool reaches the socket and sends request bytes.
 - Server logs decoded request header metadata.
-- API-level response will not be fully compliant until handlers are implemented.
+- API-level response now includes minimal `ApiVersions` and `Metadata` payloads.
 
 ## 3) Quick protocol smoke with Confluent public CLI
 

@@ -9,6 +9,8 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::error::{KafkaProtocolError, Result};
+use crate::protocol::api::handle_request;
+use crate::protocol::codec::Decoder;
 use crate::protocol::header::{RequestHeader, ResponseHeader};
 
 #[derive(Debug, Clone)]
@@ -69,7 +71,8 @@ impl KafkaServer {
 async fn handle_connection(mut stream: TcpStream, config: Arc<ServerConfig>) -> Result<()> {
     loop {
         let frame = read_frame(&mut stream, config.max_frame_size, config.read_timeout).await?;
-        let req = RequestHeader::decode(frame, 1)?;
+        let mut decoder = Decoder::new(frame);
+        let req = RequestHeader::decode_from(&mut decoder, 1)?;
         info!(
             api_key = req.api_key,
             api_version = req.api_version,
@@ -78,12 +81,14 @@ async fn handle_connection(mut stream: TcpStream, config: Arc<ServerConfig>) -> 
             "received kafka request header"
         );
 
-        // For now return an empty response body with only correlation id.
+        let body = decoder.read_bytes(decoder.remaining())?;
+        let body_response = handle_request(req.api_key, req.api_version, body);
         let resp_header = ResponseHeader {
             correlation_id: req.correlation_id,
         };
-        let mut payload = BytesMut::new();
+        let mut payload = BytesMut::with_capacity(4 + body_response.len());
         payload.put_slice(&resp_header.encode(0));
+        payload.put_slice(&body_response);
 
         write_frame(&mut stream, &payload, config.write_timeout).await?;
     }
