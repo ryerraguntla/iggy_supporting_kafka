@@ -1,0 +1,245 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: _test
+on:
+  workflow_call:
+    inputs:
+      component:
+        type: string
+        required: true
+        description: "Component to test"
+      task:
+        type: string
+        required: true
+        description: "Task to run"
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  run:
+    # Select runner based on build target
+    runs-on: ${{
+      (inputs.task == 'build-aarch64-gnu' || inputs.task == 'build-aarch64-musl') && 'ubuntu-24.04-arm' ||
+      inputs.task == 'build-macos-aarch64' && 'macos-14' ||
+      inputs.task == 'build-windows-sdk' && 'windows-latest' ||
+      'ubuntu-latest'
+      }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Skip noop
+        if: inputs.component == 'noop'
+        run: echo "No changes detected, skipping tests"
+
+      # Rust
+      - name: Run Rust task
+        if: startsWith(inputs.component, 'rust')
+        uses: ./.github/actions/rust/pre-merge
+        with:
+          task: ${{ inputs.task }}
+          component: ${{ inputs.component }}
+
+      - name: Upload coverage to Codecov
+        if: startsWith(inputs.component, 'rust') && startsWith(inputs.task, 'test-')
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: codecov.json
+          disable_search: true
+          flags: rust
+          fail_ci_if_error: false
+          verbose: true
+          override_pr: ${{ github.event.pull_request.number }}
+
+      # Python SDK
+      - name: Set up Docker Buildx for Python
+        if: inputs.component == 'sdk-python' && inputs.task == 'test'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Run Python SDK task
+        if: inputs.component == 'sdk-python'
+        uses: ./.github/actions/python-maturin/pre-merge
+        with:
+          task: ${{ inputs.task }}
+
+      - name: Upload Python coverage to Codecov
+        if: inputs.component == 'sdk-python' && inputs.task == 'test'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: reports/python-coverage.lcov
+          disable_search: true
+          flags: python
+          fail_ci_if_error: false
+          verbose: true
+          override_pr: ${{ github.event.pull_request.number }}
+
+      # Node SDK
+      - name: Run Node SDK task
+        if: inputs.component == 'sdk-node'
+        uses: ./.github/actions/node-npm/pre-merge
+        with:
+          task: ${{ inputs.task }}
+
+      - name: Upload Node coverage to Codecov
+        if: inputs.component == 'sdk-node' && (inputs.task == 'test' || inputs.task == 'e2e')
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: reports/node-coverage/${{ inputs.task == 'test' && 'unit' || 'e2e' }}/lcov.info
+          disable_search: true
+          flags: node
+          fail_ci_if_error: false
+          verbose: true
+          override_pr: ${{ github.event.pull_request.number }}
+
+      # Go SDK
+      - name: Run Go SDK task
+        if: inputs.component == 'sdk-go'
+        uses: ./.github/actions/go/pre-merge
+        with:
+          task: ${{ inputs.task }}
+
+      - name: Upload Go coverage to Codecov
+        if: inputs.component == 'sdk-go' && (inputs.task == 'test' || inputs.task == 'e2e')
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: reports/${{ inputs.task == 'test' && 'go-coverage.out' || 'go-coverage-e2e.out' }}
+          disable_search: true
+          flags: go
+          fail_ci_if_error: false
+          verbose: true
+          override_pr: ${{ github.event.pull_request.number }}
+
+      # Java SDK
+      - name: Run Java SDK task
+        if: inputs.component == 'sdk-java'
+        uses: ./.github/actions/java-gradle/pre-merge
+        with:
+          task: ${{ inputs.task }}
+
+      # C# SDK
+      - name: Run C# SDK task
+        if: inputs.component == 'sdk-csharp'
+        uses: ./.github/actions/csharp-dotnet/pre-merge
+        with:
+          task: ${{ inputs.task }}
+
+      # C++ SDK
+      - name: Run C++ SDK Task
+        if: inputs.component == 'sdk-cpp'
+        uses: ./.github/actions/cpp-bazel/pre-merge
+        with:
+          task: ${{ inputs.task }}
+
+      - name: Upload Java coverage to Codecov
+        if: inputs.component == 'sdk-java' && inputs.task == 'test'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: reports/java-coverage/jacocoAggregated.xml
+          disable_search: true
+          flags: java
+          fail_ci_if_error: false
+          verbose: true
+          override_pr: ${{ github.event.pull_request.number }}
+
+      - name: Upload C# coverage to Codecov
+        if: inputs.component == 'sdk-csharp' && (inputs.task == 'test' || inputs.task == 'e2e')
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: foreign/csharp/reports/coverage.cobertura.xml
+          disable_search: true
+          flags: csharp
+          fail_ci_if_error: false
+          verbose: true
+          override_pr: ${{ github.event.pull_request.number }}
+
+      # Web UI
+      - name: Run Web UI task
+        if: inputs.component == 'web-ui'
+        run: |
+          cd web
+          npm ci
+          if [ "${{ inputs.task }}" = "lint" ]; then
+            npm run lint
+          elif [ "${{ inputs.task }}" = "build" ]; then
+            npm run build
+          fi
+
+      # Helm chart testing
+      - name: Setup Helm test tools
+        if: inputs.component == 'helm' && (inputs.task == 'validate' || inputs.task == 'smoke')
+        uses: ./.github/actions/utils/setup-helm-tools
+        with:
+          install-kind: ${{ inputs.task == 'smoke' }}
+          install-helm-docs: ${{ inputs.task == 'validate' }}
+          install-yamllint: ${{ inputs.task == 'validate' }}
+          install-helmfmt: ${{ inputs.task == 'validate' }}
+
+      - name: Setup Helm smoke cluster
+        if: inputs.component == 'helm' && inputs.task == 'smoke'
+        run: scripts/ci/setup-helm-smoke-cluster.sh
+
+      - name: Validate Helm chart
+        if: inputs.component == 'helm' && inputs.task == 'validate'
+        run: scripts/ci/test-helm.sh validate
+
+      - name: Smoke test Helm chart runtime
+        if: inputs.component == 'helm' && inputs.task == 'smoke'
+        run: scripts/ci/test-helm.sh smoke --cleanup
+
+      - name: Collect Helm smoke diagnostics
+        if: failure() && inputs.component == 'helm' && inputs.task == 'smoke'
+        run: scripts/ci/test-helm.sh collect-smoke-diagnostics
+
+      # CI workflow validation
+      - name: Validate CI workflows
+        if: inputs.component == 'ci-workflows' && inputs.task == 'validate'
+        run: |
+          echo "Validating GitHub Actions workflows..."
+          # Basic YAML validation
+          for workflow in .github/workflows/*.yml; do
+            echo "Checking $workflow"
+            python -c "import yaml; yaml.safe_load(open('$workflow'))" || exit 1
+          done
+          echo "All workflows are valid YAML"
+
+      # Upload reports
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.component }}-${{ inputs.task }}-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/**
+            target/llvm-cov/**
+            coverage.lcov
+            codecov.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,45 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+FROM golang:1.25.0-alpine
+
+RUN apk add --no-cache gcc musl-dev
+
+WORKDIR /app
+
+# Copy only go.mod and go.sum first to leverage Docker layer caching
+COPY bdd/go/go.mod bdd/go/go.sum ./bdd/go/
+
+# Copy the go sdk code
+COPY foreign/go ./foreign/go
+
+# Install dependencies
+WORKDIR /app/bdd/go
+RUN go mod download
+
+# Return to project root
+WORKDIR /app
+
+# Copy the BDD test code and scenarios
+COPY bdd/go ./bdd/go
+COPY bdd/scenarios ./bdd/scenarios
+
+# Change workdir to bdd/go
+WORKDIR /app/bdd/go
+
+# Default command (GO_TEST_EXTRA_FLAGS can inject -race)
+CMD ["sh", "-c", "go test -v ${GO_TEST_EXTRA_FLAGS:-} ./..."]

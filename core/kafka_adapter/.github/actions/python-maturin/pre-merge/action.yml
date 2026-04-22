@@ -1,0 +1,198 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: python-maturin-pre-merge
+description: Python pre-merge testing with maturin github iggy actions
+
+inputs:
+  task:
+    description: "Task to run (lint, test, build)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Setup Rust with cache
+      uses: ./.github/actions/utils/setup-rust-with-cache
+
+    - name: Install cargo-llvm-cov
+      if: inputs.task == 'test'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-llvm-cov
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098 # v7.3.1
+
+    - name: Cache uv
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/uv
+        key: uv-${{ runner.os }}-${{ hashFiles('examples/python/uv.lock', 'foreign/python/uv.lock', 'bdd/python/uv.lock') }}
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        cd foreign/python
+        uv sync --frozen --extra dev --extra testing --extra testing-docker
+
+    - name: Lint and format check
+      if: inputs.task == 'lint'
+      run: |
+        # Build list of directories to check
+        DIR_SDK="${GITHUB_WORKSPACE}/foreign/python"
+        DIR_BDD="${GITHUB_WORKSPACE}/bdd/python"
+        DIR_EXAMPLES="${GITHUB_WORKSPACE}/examples/python"
+
+        # Collect all Python directories that exist
+        DIRS_TO_CHECK="$DIR_SDK"
+        [ -d "$DIR_BDD" ] && DIRS_TO_CHECK="$DIRS_TO_CHECK $DIR_BDD"
+        [ -d "$DIR_EXAMPLES" ] && DIRS_TO_CHECK="$DIRS_TO_CHECK $DIR_EXAMPLES"
+
+        cd foreign/python
+
+        echo "Directories to check: $DIRS_TO_CHECK"
+        echo "ruff version: $(uv run ruff --version)"
+
+        echo "Running ruff check..."
+        uv run ruff check $DIRS_TO_CHECK
+
+        echo "Running ruff format --check..."
+        uv run ruff format --check $DIRS_TO_CHECK
+
+        # mypy only for the SDK (has type stubs)
+        echo "Running mypy on SDK..."
+        uv run mypy --explicit-package-bases "$DIR_SDK"
+        echo "mypy version: $(uv run mypy --version)"
+      shell: bash
+
+    - name: Build Python wheel with coverage instrumentation
+      if: inputs.task == 'test'
+      run: |
+        cd foreign/python
+        source <(cargo llvm-cov show-env --sh)
+        export CARGO_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR
+
+        # Propagate LLVM_PROFILE_FILE so the test step can write profraw data
+        echo "LLVM_PROFILE_FILE=${LLVM_PROFILE_FILE}" >> $GITHUB_ENV
+
+        cargo llvm-cov clean --workspace
+        echo "Building Python wheel with coverage instrumentation..."
+        uv run --no-sync maturin develop
+      shell: bash
+
+    - name: Build Python wheel
+      if: inputs.task == 'build'
+      run: |
+        cd foreign/python
+
+        # Build the module
+        echo "Building Python wheel..."
+        uv run maturin build -o dist
+
+        # List built artifacts
+        echo ""
+        echo "Build artifacts:"
+        ls -la dist/
+      shell: bash
+
+    - name: Start Iggy server
+      if: inputs.task == 'test'
+      id: iggy
+      uses: ./.github/actions/utils/server-start
+      continue-on-error: true
+
+    - name: Run Python integration tests
+      if: inputs.task == 'test' && steps.iggy.outcome == 'success'
+      run: |
+        cd foreign/python
+
+        echo "Running integration tests with Iggy server at ${{ steps.iggy.outputs.address }}..."
+
+        # Run all tests with server connection
+        # --no-sync prevents uv from re-syncing the venv which would
+        # overwrite the coverage-instrumented .so with a non-instrumented one
+        IGGY_SERVER_HOST=127.0.0.1 \
+        IGGY_SERVER_TCP_PORT=8090 \
+          uv run --no-sync pytest tests/ -v \
+            --junitxml=../../reports/python-junit.xml \
+            --tb=short \
+            --capture=no || TEST_EXIT_CODE=$?
+
+        # Exit with test result
+        exit ${TEST_EXIT_CODE:-0}
+      shell: bash
+
+    - name: Run Python unit tests only (fallback)
+      if: inputs.task == 'test' && steps.iggy.outcome != 'success'
+      run: |
+        cd foreign/python
+
+        echo "⚠️ Server failed to start, running unit tests only..."
+
+        # Run unit tests only (exclude integration tests)
+        uv run --no-sync pytest tests/ -v \
+          -m "not integration" \
+          --junitxml=../../reports/python-junit.xml \
+          --tb=short || TEST_EXIT_CODE=$?
+
+        # Exit with test result (allow some failures in unit-only mode)
+        exit ${TEST_EXIT_CODE:-0}
+      shell: bash
+
+    - name: Stop Iggy server
+      if: always() && inputs.task == 'test'
+      uses: ./.github/actions/utils/server-stop
+      with:
+        pid-file: ${{ steps.iggy.outputs.pid_file }}
+        log-file: ${{ steps.iggy.outputs.log_file }}
+
+    - name: Generate coverage report
+      if: inputs.task == 'test'
+      run: |
+        mkdir -p reports
+        cd foreign/python
+        source <(cargo llvm-cov show-env --sh)
+        export CARGO_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR
+
+        cargo llvm-cov report --lcov \
+          --ignore-filename-regex='(\.cargo/|/rustc/|/core/)' \
+          --output-path ../../reports/python-coverage.lcov
+
+        # Fix paths: cargo-llvm-cov outputs paths relative to the crate root (src/...)
+        # but Codecov expects paths relative to the repo root (foreign/python/src/...)
+        sed -i 's|^SF:src/|SF:foreign/python/src/|' ../../reports/python-coverage.lcov
+
+        echo "Coverage report generated: $(wc -l < ../../reports/python-coverage.lcov) lines"
+      shell: bash
+
+    - name: Upload test artifacts
+      if: always() && inputs.task == 'test'
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          reports/python-junit.xml
+          reports/python-coverage.lcov
+          foreign/python/dist/*.whl
+        retention-days: 7
+        if-no-files-found: ignore

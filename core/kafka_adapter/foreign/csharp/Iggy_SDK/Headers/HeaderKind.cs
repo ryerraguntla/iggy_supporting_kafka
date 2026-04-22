@@ -1,0 +1,99 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+namespace Apache.Iggy.Headers;
+
+/// <summary>
+///     The kind of header.
+/// </summary>
+public enum HeaderKind
+{
+    /// <summary>
+    ///     Raw header as bytes.
+    /// </summary>
+    Raw,
+
+    /// <summary>
+    ///     String header.
+    /// </summary>
+    String,
+
+    /// <summary>
+    ///     Boolean header.
+    /// </summary>
+    Bool,
+
+    /// <summary>
+    ///     Signed 8-bit integer header.
+    /// </summary>
+    Int8,
+
+    /// <summary>
+    ///     Signed 16-bit integer header.
+    /// </summary>
+    Int16,
+
+    /// <summary>
+    ///     Signed 32-bit integer header.
+    /// </summary>
+    Int32,
+
+    /// <summary>
+    ///     Long header.
+    /// </summary>
+    Int64,
+
+    /// <summary>
+    ///     128-bit integer header.
+    /// </summary>
+    Int128,
+
+    /// <summary>
+    ///     Unsigned 8-bit integer header.
+    /// </summary>
+    Uint8,
+
+    /// <summary>
+    ///     Unsigned 16-bit integer header.
+    /// </summary>
+    Uint16,
+
+    /// <summary>
+    ///     Unsigned 32-bit integer header.
+    /// </summary>
+    Uint32,
+
+    /// <summary>
+    ///     Unsigned long header.
+    /// </summary>
+    Uint64,
+
+    /// <summary>
+    ///     Unsigned 128-bit integer header.
+    /// </summary>
+    Uint128,
+
+    /// <summary>
+    ///     Floating point header.
+    /// </summary>
+    Float,
+
+    /// <summary>
+    ///     Double precision floating point header.
+    /// </summary>
+    Double
+}

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <OutputType>Exe</OutputType>
+        <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+        <AssemblyName>Apache.Iggy.Tests.Integrations</AssemblyName>
+        <RootNamespace>Apache.Iggy.Tests.Integrations</RootNamespace>
+        <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+        <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+        <PackageReference Include="Shouldly" />
+        <PackageReference Include="Testcontainers" />
+        <PackageReference Include="TUnit" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Iggy_SDK\Iggy_SDK.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="..\..\..\core\certs\iggy.pfx">
+            <Link>Certs\iggy.pfx</Link>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\..\..\core\certs\iggy_ca_cert.pem">
+            <Link>Certs\iggy_ca_cert.pem</Link>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\..\..\core\certs\iggy_cert.pem">
+            <Link>Certs\iggy_cert.pem</Link>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\..\..\core\certs\iggy_key.pem">
+            <Link>Certs\iggy_key.pem</Link>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,112 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Apache.Iggy.Headers;
+using Apache.Iggy.Messages;
+
+namespace Apache.Iggy.JsonConverters;
+
+internal sealed class MessageConverter : JsonConverter<Message>
+{
+    public override Message Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        throw new NotImplementedException();
+    }
+
+    public override void Write(Utf8JsonWriter writer, Message value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+
+        WriteMessageId(writer, value.Header.Id);
+        WritePayload(writer, value.Payload);
+        if (value.RawUserHeaders is not null)
+        {
+            writer.WriteBase64String("user_headers", value.RawUserHeaders);
+        }
+        else
+        {
+            WriteHeaders(writer, value.UserHeaders);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteMessageId(Utf8JsonWriter writer, UInt128 id)
+    {
+        writer.WriteString("id", id.ToString());
+    }
+
+    private static void WritePayload(Utf8JsonWriter writer, byte[] payload)
+    {
+        writer.WriteString("payload", Convert.ToBase64String(payload));
+    }
+
+    private static void WriteHeaders(Utf8JsonWriter writer, Dictionary<HeaderKey, HeaderValue>? userHeaders)
+    {
+        if (userHeaders is null)
+        {
+            writer.WriteNull("user_headers");
+            return;
+        }
+
+        writer.WriteStartArray("user_headers");
+
+        foreach (var (headerKey, headerValue) in userHeaders)
+        {
+            writer.WriteStartObject();
+
+            writer.WriteStartObject("key");
+            writer.WriteString("kind", GetHeaderKindString(headerKey.Kind));
+            writer.WriteBase64String("value", headerKey.Value);
+            writer.WriteEndObject();
+
+            writer.WriteStartObject("value");
+            writer.WriteString("kind", GetHeaderKindString(headerValue.Kind));
+            writer.WriteBase64String("value", headerValue.Value);
+            writer.WriteEndObject();
+
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+    }
+
+    private static string GetHeaderKindString(HeaderKind kind)
+    {
+        return kind switch
+        {
+            HeaderKind.Raw => "raw",
+            HeaderKind.String => "string",
+            HeaderKind.Bool => "bool",
+            HeaderKind.Int8 => "int8",
+            HeaderKind.Int16 => "int16",
+            HeaderKind.Int32 => "int32",
+            HeaderKind.Int64 => "int64",
+            HeaderKind.Int128 => "int128",
+            HeaderKind.Uint8 => "uint8",
+            HeaderKind.Uint16 => "uint16",
+            HeaderKind.Uint32 => "uint32",
+            HeaderKind.Uint64 => "uint64",
+            HeaderKind.Uint128 => "uint128",
+            HeaderKind.Float => "float32",
+            HeaderKind.Double => "float64",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Invalid header kind")
+        };
+    }
+}

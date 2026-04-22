@@ -1,0 +1,171 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: _test_examples
+on:
+  workflow_call:
+    inputs:
+      component:
+        type: string
+        required: true
+        description: "Component to test (e.g., 'examples-rust', 'examples-go')"
+      task:
+        type: string
+        required: true
+        description: "Task to run (e.g., 'examples-rust', 'examples-go', 'examples-node')"
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Skip noop
+        if: inputs.component == 'noop'
+        run: echo "No changes detected, skipping tests"
+
+      - name: Setup Rust with cache for examples
+        if: startsWith(inputs.component, 'examples-')
+        uses: ./.github/actions/utils/setup-rust-with-cache
+
+      - name: Setup Node with cache for examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-node'
+        uses: ./.github/actions/utils/setup-node-with-cache
+        with:
+          node-version: "23"
+          cache-dependency-path: examples/node/package-lock.json
+          workspace: examples/node
+
+      - name: Setup Python
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Setup uv
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-python'
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098 # v7.3.1
+
+      - name: Cache uv
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-python'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('examples/python/uv.lock', 'foreign/python/uv.lock', 'bdd/python/uv.lock') }}
+
+      - name: Setup Java with cache for examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-java'
+        uses: ./.github/actions/utils/setup-java-with-cache
+        with:
+          gradle-cache-disabled: "true"
+
+      - name: Setup Go for examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-go'
+        uses: ./.github/actions/utils/setup-go-with-cache
+        with:
+          download-deps: "false"
+
+      - name: Build common binaries for all examples
+        if: startsWith(inputs.component, 'examples-')
+        run: |
+          echo "Building common binaries for all examples tests..."
+          echo "Current directory: $(pwd)"
+
+          # Build server (needed by both Rust and Go examples)
+          echo "Building iggy-server..."
+          cargo build --locked --bin iggy-server
+
+          # For Rust examples, also build CLI and example binaries
+          if [[ "${{ inputs.task }}" == "examples-rust" ]]; then
+            echo "Building additional binaries for Rust examples..."
+            cargo build --locked --bin iggy --examples
+          fi
+
+          # Verify server binary was built (needed by all examples)
+          echo "Verifying server binary:"
+          if [ -f "target/debug/iggy-server" ]; then
+            echo "✅ Server binary found at target/debug/iggy-server"
+            ls -lh target/debug/iggy-server
+          else
+            echo "❌ Server binary NOT found at target/debug/iggy-server"
+            echo "Checking target directory structure:"
+            find target -name "iggy-server" -type f 2>/dev/null || true
+            exit 1
+          fi
+
+          # For Rust examples, verify CLI was built
+          if [[ "${{ inputs.task }}" == "examples-rust" ]]; then
+            if [ -f "target/debug/iggy" ]; then
+              echo "✅ CLI binary found at target/debug/iggy"
+              ls -lh target/debug/iggy
+            else
+              echo "❌ CLI binary NOT found at target/debug/iggy"
+              exit 1
+            fi
+          fi
+
+      - name: Build Node SDK for examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-node'
+        run: |
+          cd foreign/node
+          npm ci
+          npm run build
+          cd ../..
+          cd examples/node
+          npm ci
+          cd ../..
+
+      - name: Run Rust examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-rust'
+        run: ./scripts/run-examples-from-readme.sh --language rust
+
+      - name: Run Go examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-go'
+        run: ./scripts/run-examples-from-readme.sh --language go
+
+      - name: Run C# examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-csharp'
+        run: ./scripts/run-examples-from-readme.sh --language csharp
+
+      - name: Run Python examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-python'
+        run: ./scripts/run-examples-from-readme.sh --language python
+
+      - name: Run Node.js examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-node'
+        run: ./scripts/run-examples-from-readme.sh --language node
+
+      - name: Run Java examples
+        if: startsWith(inputs.component, 'examples-') && inputs.task == 'examples-java'
+        run: ./scripts/run-examples-from-readme.sh --language java
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.component }}-${{ inputs.task }}-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/**
+            target/llvm-cov/**
+            coverage.lcov
+          if-no-files-found: ignore
+          retention-days: 7

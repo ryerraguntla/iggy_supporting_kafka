@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <PackageId>Apache.Iggy</PackageId>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+        <AssemblyName>Apache.Iggy</AssemblyName>
+        <RootNamespace>Apache.Iggy</RootNamespace>
+        <Version>0.8.0</Version>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <Description>C# SDK for Apache Iggy</Description>
+        <Authors>Apache Iggy</Authors>
+        <IsPackable>true</IsPackable>
+        <PackageTags>SDK Iggy Messaging</PackageTags>
+        <RepositoryType>git</RepositoryType>
+        <RepositoryUrl>https://github.com/apache/iggy</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/apache/iggy</PackageProjectUrl>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="../README.md" Pack="true" PackagePath="">
+            <Link>Properties/README.md</Link>
+        </None>
+        <None Include="../LICENSE" Pack="true" PackagePath="">
+            <Link>Properties/LICENSE</Link>
+        </None>
+        <None Include="../DEPENDENCIES.md">
+            <Link>Properties\DEPENDENCIES.md</Link>
+        </None>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Logging" />
+        <PackageReference Include="System.IO.Hashing" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="Apache.Iggy.Tests" />
+        <InternalsVisibleTo Include="Apache.Iggy.Tests.Integrations" />
+    </ItemGroup>
+
+</Project>

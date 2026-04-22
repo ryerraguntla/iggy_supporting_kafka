@@ -1,0 +1,234 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# -- Iggy server configuration
+server:
+  # -- Enable the Iggy server deployment
+  enabled: true
+  # -- Number of server replicas
+  replicaCount: 1
+  image:
+    # -- Server image repository
+    repository: apache/iggy
+    # -- Image pull policy
+    pullPolicy: Always
+    # -- Server image tag (overrides chart appVersion)
+    tag: "0.7.0"
+  ports:
+    # -- HTTP API port
+    http: 3000
+    # -- QUIC protocol port
+    quic: 8080
+    # -- TCP protocol port
+    tcp: 8090
+
+  service:
+    # -- Service type for the server
+    type: ClusterIP
+    # -- Service port for the server
+    port: 3000
+
+  serviceMonitor:
+    # -- Enable ServiceMonitor for Prometheus Operator
+    enabled: false
+    # -- Namespace to deploy the ServiceMonitor
+    namespace: ""
+    # -- Scrape interval (fallback to Prometheus default)
+    interval: 30s
+    # -- Additional labels for the ServiceMonitor
+    additionalLabels: {}
+    # -- Honor labels from the target
+    honorLabels: false
+    # -- Path to scrape metrics from
+    path: /metrics
+    # -- Timeout for scrape metrics request
+    scrapeTimeout: 10s
+
+  users:
+    root:
+      # -- Create a secret for the root user credentials
+      createSecret: true
+      # -- Root username
+      username: iggy
+      # -- Root password
+      password: changeit
+      existingSecret:
+        # -- Name of existing secret for root credentials
+        name: ""
+        # -- Key in secret for username
+        usernameKey: username
+        # -- Key in secret for password
+        passwordKey: password
+
+  persistence:
+    # -- Enable persistence using PVC
+    enabled: false
+    # -- PVC annotations
+    annotations: {}
+    # -- Storage class for PVC (empty uses default provisioner)
+    storageClass: ""
+    # -- Use existing PVC (requires persistence.enabled: true)
+    existingClaim: ""
+    # -- PVC access mode
+    accessMode: ReadWriteOnce
+    # -- PVC storage size
+    size: 8Gi
+
+  # -- Environment variables for the server container
+  env:
+    - name: RUST_LOG
+      value: info
+    - name: IGGY_HTTP_ADDRESS
+      value: "0.0.0.0:3000"
+    - name: IGGY_TCP_ADDRESS
+      value: "0.0.0.0:8090"
+    - name: IGGY_QUIC_ADDRESS
+      value: "0.0.0.0:8080"
+    - name: IGGY_WEBSOCKET_ADDRESS
+      value: "0.0.0.0:8092"
+
+  # -- Node selector for server pods
+  nodeSelector: {}
+
+  # -- Tolerations for server pods
+  tolerations: []
+
+  # -- Affinity rules for server pods
+  affinity: {}
+
+  ingress:
+    # -- Enable ingress for the server
+    enabled: false
+    # -- Ingress class name (controller-neutral)
+    className: ""
+    # -- Ingress annotations (controller-specific)
+    annotations: {}
+    # -- Ingress hosts configuration
+    hosts:
+      - host: chart-example.local
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    # -- Ingress TLS configuration
+    tls: []
+
+# -- Iggy web UI configuration
+ui:
+  # -- Enable the web UI deployment
+  enabled: true
+  ports:
+    # -- HTTP port for web UI
+    http: 3050
+  server:
+    # -- Iggy server endpoint (blank uses service URL)
+    endpoint: ""
+
+  service:
+    # -- Service type for the UI
+    type: ClusterIP
+    # -- Service port for the UI
+    port: 3050
+  # -- Number of UI replicas
+  replicaCount: 1
+  # -- Extra environment variables for UI container
+  env: {}
+  image:
+    # -- UI image repository
+    repository: apache/iggy-web-ui
+    # -- UI image pull policy
+    pullPolicy: Always
+    # -- UI image tag (overrides chart appVersion)
+    tag: "edge"
+  ingress:
+    # -- Enable ingress for the UI
+    enabled: false
+    # -- Ingress class name (controller-neutral)
+    className: ""
+    # -- Ingress annotations (controller-specific)
+    annotations: {}
+    # -- Ingress hosts configuration
+    hosts:
+      - host: chart-example.local
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    # -- Ingress TLS configuration
+    tls: []
+  # -- Resource limits and requests for UI
+  resources: {}
+
+  # -- Pod security context for UI pods
+  podSecurityContext: {}
+
+  # -- Container security context for UI
+  securityContext: {}
+
+  # -- Node selector for UI pods
+  nodeSelector: {}
+
+  # -- Tolerations for UI pods
+  tolerations: []
+
+  # -- Affinity rules for UI pods
+  affinity: {}
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+# -- Override chart name
+nameOverride: ""
+# -- Override full release name
+fullnameOverride: ""
+
+# -- Additional labels for all resources
+additionalLabels: {}
+
+serviceAccount:
+  # -- Create a service account
+  create: true
+  # -- Service account annotations
+  annotations: {}
+  # -- Service account name (generated if not set)
+  name: ""
+
+# -- Pod annotations
+podAnnotations: {}
+
+# -- Pod security context (server uses io_uring, requires unconfined seccomp)
+podSecurityContext:
+  seccompProfile:
+    type: Unconfined
+
+# -- Container security context (server requires IPC_LOCK for io_uring)
+securityContext:
+  capabilities:
+    add:
+      - IPC_LOCK
+
+# -- Resource limits and requests for server
+resources: {}
+
+autoscaling:
+  # -- Enable horizontal pod autoscaling
+  enabled: false
+  # -- Minimum replicas for autoscaling
+  minReplicas: 1
+  # -- Maximum replicas for autoscaling
+  maxReplicas: 100
+  # -- Target CPU utilization for autoscaling
+  targetCPUUtilizationPercentage: 80
+  # -- Target memory utilization for autoscaling (optional)
+  # targetMemoryUtilizationPercentage: 80

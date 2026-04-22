@@ -1,0 +1,192 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+use iggy_binary_protocol::{GenericHeader, Message};
+use iggy_common::IggyError;
+use message_bus::MessageBus;
+use std::collections::{HashSet, VecDeque};
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
+
+/// Message envelope for tracking sender/recipient
+#[derive(Debug)]
+pub enum EnvelopePayload {
+    Replica(Message<GenericHeader>),
+    Client(Message<GenericHeader>),
+}
+
+#[derive(Debug)]
+pub struct Envelope {
+    pub from_replica: Option<u8>,
+    pub to_replica: Option<u8>,
+    pub to_client: Option<u128>,
+    pub payload: EnvelopePayload,
+}
+
+/// Per-replica outbox for staging outbound messages.
+///
+/// Consensus code calls `send_to_replica()` / `send_to_client()` which stage
+/// messages here. The simulator's tick loop drains each replica's outbox and
+/// feeds the messages into the [`Network`] for simulated delivery.
+#[derive(Debug)]
+pub struct SimOutbox {
+    /// Replica id that owns this outbox. Populated as `from_replica` on every envelope.
+    self_id: u8,
+    clients: Mutex<HashSet<u128>>,
+    replicas: Mutex<HashSet<u8>>,
+    pending_messages: Mutex<VecDeque<Envelope>>,
+}
+
+impl SimOutbox {
+    #[must_use]
+    pub fn new(self_id: u8) -> Self {
+        Self {
+            self_id,
+            clients: Mutex::new(HashSet::new()),
+            replicas: Mutex::new(HashSet::new()),
+            pending_messages: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    /// Drain all staged messages from this outbox.
+    ///
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
+    pub fn drain(&self) -> Vec<Envelope> {
+        self.pending_messages.lock().unwrap().drain(..).collect()
+    }
+}
+
+impl MessageBus for SimOutbox {
+    type Client = u128;
+    type Replica = u8;
+    type Data = Message<GenericHeader>;
+    type Sender = ();
+
+    fn add_client(&mut self, client: Self::Client, _sender: Self::Sender) -> bool {
+        if self.clients.lock().unwrap().contains(&client) {
+            return false;
+        }
+        self.clients.lock().unwrap().insert(client);
+        true
+    }
+
+    fn remove_client(&mut self, client: Self::Client) -> bool {
+        self.clients.lock().unwrap().remove(&client)
+    }
+
+    fn add_replica(&mut self, replica: Self::Replica) -> bool {
+        if self.replicas.lock().unwrap().contains(&replica) {
+            return false;
+        }
+        self.replicas.lock().unwrap().insert(replica);
+        true
+    }
+
+    fn remove_replica(&mut self, replica: Self::Replica) -> bool {
+        self.replicas.lock().unwrap().remove(&replica)
+    }
+
+    async fn send_to_client(
+        &self,
+        client_id: Self::Client,
+        message: Self::Data,
+    ) -> Result<Self::Data, IggyError> {
+        if !self.clients.lock().unwrap().contains(&client_id) {
+            #[allow(clippy::cast_possible_truncation)]
+            return Err(IggyError::ClientNotFound(client_id as u32));
+        }
+
+        self.pending_messages.lock().unwrap().push_back(Envelope {
+            from_replica: Some(self.self_id),
+            to_replica: None,
+            to_client: Some(client_id),
+            payload: EnvelopePayload::Client(message.deep_copy()),
+        });
+
+        Ok(message)
+    }
+
+    async fn send_to_replica(
+        &self,
+        replica: Self::Replica,
+        message: Self::Data,
+    ) -> Result<Self::Data, IggyError> {
+        if !self.replicas.lock().unwrap().contains(&replica) {
+            return Err(IggyError::ResourceNotFound(format!("Replica {replica}")));
+        }
+
+        self.pending_messages.lock().unwrap().push_back(Envelope {
+            from_replica: Some(self.self_id),
+            to_replica: Some(replica),
+            to_client: None,
+            payload: EnvelopePayload::Replica(message.deep_copy()),
+        });
+
+        Ok(message)
+    }
+}
+
+/// Newtype wrapper for shared [`SimOutbox`] that implements [`MessageBus`]
+#[derive(Debug, Clone)]
+pub struct SharedSimOutbox(pub Arc<SimOutbox>);
+
+impl Deref for SharedSimOutbox {
+    type Target = SimOutbox;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl MessageBus for SharedSimOutbox {
+    type Client = u128;
+    type Replica = u8;
+    type Data = Message<GenericHeader>;
+    type Sender = ();
+
+    fn add_client(&mut self, client: Self::Client, _sender: Self::Sender) -> bool {
+        self.0.clients.lock().unwrap().insert(client)
+    }
+
+    fn remove_client(&mut self, client: Self::Client) -> bool {
+        self.0.clients.lock().unwrap().remove(&client)
+    }
+
+    fn add_replica(&mut self, replica: Self::Replica) -> bool {
+        self.0.replicas.lock().unwrap().insert(replica)
+    }
+
+    fn remove_replica(&mut self, replica: Self::Replica) -> bool {
+        self.0.replicas.lock().unwrap().remove(&replica)
+    }
+
+    async fn send_to_client(
+        &self,
+        client_id: Self::Client,
+        message: Self::Data,
+    ) -> Result<Self::Data, IggyError> {
+        self.0.send_to_client(client_id, message).await
+    }
+
+    async fn send_to_replica(
+        &self,
+        replica: Self::Replica,
+        message: Self::Data,
+    ) -> Result<Self::Data, IggyError> {
+        self.0.send_to_replica(replica, message).await
+    }
+}

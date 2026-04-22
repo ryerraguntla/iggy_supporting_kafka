@@ -1,0 +1,431 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+components:
+  # Workspace-level changes that affect all Rust components
+  rust-workspace:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+
+  # crates.io publish chain verification. Runs scripts/verify-crates-publish.sh,
+  # which spins up cargo-http-registry as a local alt-registry and chain-publishes
+  # the four crates we ship to crates.io. Catches the class of bug that broke
+  # Apache Iggy 0.8.0 rc1 (path-only workspace dep without `version =`).
+  rust-publish:
+    depends_on:
+      - "rust-workspace" # rust-toolchain.toml / .cargo/** affect cargo publish
+      - "ci-infrastructure" # action.yml/workflow edits should re-run the check
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "core/binary_protocol/Cargo.toml"
+      - "core/common/Cargo.toml"
+      - "core/sdk/Cargo.toml"
+      - "core/cli/Cargo.toml"
+      - "scripts/verify-crates-publish.sh"
+      - ".github/actions/rust/pre-merge/action.yml"
+    tasks:
+      - "verify-publish"
+
+  # CI/CD infrastructure changes that require full regression
+  ci-infrastructure:
+    paths:
+      - ".github/**"
+
+  # Core library components that others depend on
+  rust-sdk:
+    depends_on:
+      - "rust-workspace" # SDK is affected by workspace changes
+      - "ci-infrastructure" # CI changes trigger full regression
+    paths:
+      - "core/sdk/**"
+
+  rust-configs:
+    depends_on:
+      - "rust-workspace"
+    paths:
+      - "core/configs/**"
+      - "core/configs_derive/**"
+
+  rust-common:
+    depends_on:
+      - "rust-workspace"
+      - "rust-configs"
+    paths:
+      - "core/common/**"
+
+  rust-binary-protocol:
+    depends_on:
+      - "rust-workspace" # Protocol is affected by workspace changes
+      - "ci-infrastructure" # CI changes trigger full regression
+    paths:
+      - "core/binary_protocol/**"
+
+  rust-server:
+    depends_on:
+      - "rust-workspace"
+      - "rust-configs"
+      - "rust-common"
+      - "rust-binary-protocol"
+      - "rust-cluster"
+    paths:
+      - "core/server/**"
+      - "core/server-ng/**"
+
+  rust-cluster:
+    depends_on:
+      - "rust-workspace"
+      - "rust-binary-protocol" # cluster crates depend on binary_protocol
+    paths:
+      - "core/clock/**"
+      - "core/consensus/**"
+      - "core/journal/**"
+      - "core/shard/**"
+      - "core/metadata/**"
+      - "core/message_bus/**"
+      - "core/partitions/**"
+
+  # Standalone simulation tool, does NOT affect server binary or foreign SDKs.
+  # Split from rust-cluster to avoid triggering SDK tests on simulator-only changes.
+  rust-simulator:
+    depends_on:
+      - "rust-workspace"
+      - "rust-cluster"
+    paths:
+      - "core/simulator/**"
+
+  # Main Rust workspace testing
+  rust:
+    depends_on:
+      - "rust-workspace"
+      - "rust-configs"
+      - "rust-sdk"
+      - "rust-common"
+      - "rust-binary-protocol"
+      - "rust-server"
+      - "rust-cluster"
+      - "rust-simulator"
+      - "rust-tools"
+      - "rust-cli"
+      - "rust-bench"
+      - "rust-connectors"
+      - "rust-mcp"
+      - "rust-integration"
+      - "ci-infrastructure"
+    paths:
+      - "Dockerfile*"
+      - "!foreign/**" # Exclude foreign SDKs
+      - "!web/**" # Exclude web UI
+    tasks:
+      - "check"
+      - "fmt"
+      - "clippy"
+      - "sort"
+      - "doctest"
+      - "machete"
+      - "test-1"
+      - "test-2"
+      - "compat"
+      - "build-aarch64-gnu"
+      - "build-aarch64-musl"
+      - "build-macos-aarch64"
+      - "build-windows-sdk"
+
+  # CLI component
+  rust-cli:
+    depends_on:
+      - "rust-sdk"
+      - "rust-binary-protocol"
+    paths:
+      - "core/cli/**"
+
+  # Benchmark component
+  rust-bench:
+    depends_on:
+      - "rust-sdk"
+    paths:
+      - "core/bench/**"
+
+  # Connectors runtime
+  rust-connectors:
+    depends_on:
+      - "rust-sdk"
+      - "rust-configs"
+    paths:
+      - "core/connectors/**"
+
+  # MCP AI component
+  rust-mcp:
+    depends_on:
+      - "rust-sdk"
+      - "rust-configs"
+    paths:
+      - "core/ai/mcp/**"
+
+  # Integration tests
+  rust-integration:
+    depends_on:
+      - "rust-sdk"
+      - "rust-common"
+      - "rust-binary-protocol"
+      - "rust-server"
+      - "rust-configs"
+    paths:
+      - "core/integration/**"
+      - "core/harness_derive/**"
+
+  sdk-python:
+    depends_on:
+      - "rust-sdk" # Python SDK wraps the Rust SDK
+      - "rust-server" # For integration tests
+      - "ci-infrastructure" # CI changes trigger full regression
+    paths:
+      - "foreign/python/**"
+    tasks: ["lint", "test", "build"]
+
+  sdk-node:
+    depends_on:
+      - "rust-sdk" # Node SDK depends on core SDK
+      - "rust-server" # For integration tests
+      - "ci-infrastructure" # CI changes trigger full regression
+    paths:
+      - "foreign/node/**"
+    tasks: ["lint", "test", "build", "e2e"]
+
+  sdk-go:
+    depends_on:
+      - "rust-sdk" # Go SDK depends on core SDK
+      - "rust-server" # For integration tests
+      - "ci-infrastructure" # CI changes trigger full regression
+    paths:
+      - "foreign/go/**"
+      - "bdd/go/**"
+      - "examples/go/**"
+    tasks: ["lint", "test", "build", "e2e"]
+
+  sdk-java:
+    depends_on:
+      - "rust-sdk" # Java SDK depends on core SDK
+      - "rust-server" # For integration tests
+      - "ci-infrastructure" # CI changes trigger full regression
+    paths:
+      - "foreign/java/**"
+      - "examples/java/**"
+    tasks: ["lint", "test", "build"]
+
+  sdk-csharp:
+    depends_on:
+      - "rust-sdk" # C# SDK depends on core SDK
+      - "rust-server" # For integration tests
+      - "ci-infrastructure" # CI changes trigger full regression
+    paths:
+      - "foreign/csharp/**"
+      - "examples/csharp/**"
+    tasks: ["lint", "test", "build", "e2e"]
+
+  sdk-cpp:
+    depends_on:
+      - "rust-sdk"
+      - "rust-server"
+      - "ci-infrastructure"
+    paths:
+      - "foreign/cpp/**"
+    tasks: ["lint", "build", "test", "e2e"]
+
+  # Shared BDD infrastructure that affects all BDD tests
+  bdd-infrastructure:
+    paths:
+      - "scripts/run-bdd-tests.sh"
+      - "bdd/docker-compose.yml"
+      - "bdd/docker-compose.coverage.yml"
+
+  # Individual BDD tests per SDK - only run when specific SDK changes
+  bdd-rust:
+    depends_on:
+      - "rust-sdk"
+      - "rust-server"
+      - "bdd-infrastructure"
+      - "ci-infrastructure"
+    paths:
+      - "bdd/rust/**"
+      - "bdd/scenarios/**"
+    tasks: ["bdd-rust"]
+
+  bdd-python:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk"
+      - "sdk-python"
+      - "bdd-infrastructure"
+      - "ci-infrastructure"
+    paths:
+      - "bdd/python/**"
+      - "bdd/scenarios/**"
+    tasks: ["bdd-python"]
+
+  bdd-go:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk"
+      - "sdk-go"
+      - "bdd-infrastructure"
+      - "ci-infrastructure"
+    paths:
+      - "bdd/go/**"
+      - "bdd/scenarios/**"
+    tasks: ["bdd-go", "bdd-go-race"]
+
+  bdd-node:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk"
+      - "sdk-node"
+      - "bdd-infrastructure"
+      - "ci-infrastructure"
+    paths:
+      - "bdd/node/**"
+      - "bdd/scenarios/**"
+    tasks: ["bdd-node"]
+
+  bdd-csharp:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk"
+      - "sdk-csharp"
+      - "bdd-infrastructure"
+      - "ci-infrastructure"
+    paths:
+      - "bdd/csharp/**"
+      - "bdd/scenarios/**"
+    tasks: ["bdd-csharp"]
+
+  bdd-java:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk"
+      - "sdk-java"
+      - "bdd-infrastructure"
+      - "ci-infrastructure"
+    paths:
+      - "bdd/java/**"
+      - "bdd/scenarios/**"
+    tasks: ["bdd-java"]
+
+  examples-rust:
+    depends_on:
+      - "rust-sdk"
+      - "rust-server"
+      - "ci-infrastructure"
+    paths:
+      - "examples/rust/**"
+      - "scripts/run-examples-from-readme.sh"
+      - "scripts/utils.sh"
+    tasks: ["examples-rust"]
+
+  examples-go:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk" # All SDKs depend on core SDK changes
+      - "sdk-go"
+      - "ci-infrastructure"
+    paths:
+      - "examples/go/**"
+      - "scripts/run-examples-from-readme.sh"
+      - "scripts/utils.sh"
+    tasks: ["examples-go"]
+
+  examples-csharp:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk" # All SDKs depend on core SDK changes
+      - "sdk-csharp"
+      - "ci-infrastructure"
+    paths:
+      - "examples/csharp/**"
+      - "scripts/run-examples-from-readme.sh"
+      - "scripts/utils.sh"
+    tasks: ["examples-csharp"]
+
+  examples-python:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk" # All SDKs depend on core SDK changes
+      - "sdk-python"
+      - "ci-infrastructure"
+    paths:
+      - "examples/python/**"
+      - "scripts/run-examples-from-readme.sh"
+      - "scripts/utils.sh"
+    tasks: ["examples-python"]
+
+  examples-node:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk" # All SDKs depend on core SDK changes
+      - "sdk-node"
+      - "ci-infrastructure"
+    paths:
+      - "examples/node/**"
+      - "scripts/run-examples-from-readme.sh"
+      - "scripts/utils.sh"
+    tasks: ["examples-node"]
+
+  examples-java:
+    depends_on:
+      - "rust-server"
+      - "rust-sdk" # All SDKs depend on core SDK changes
+      - "sdk-java"
+      - "ci-infrastructure"
+    paths:
+      - "examples/java/**"
+      - "scripts/run-examples-from-readme.sh"
+      - "scripts/utils.sh"
+    tasks: ["examples-java"]
+
+  web-ui:
+    paths:
+      - "web/**"
+    tasks: ["lint", "build"]
+
+  helm:
+    paths:
+      - "helm/**"
+    tasks: ["validate", "smoke"]
+
+  rust-bench-dashboard:
+    paths:
+      - "core/bench/dashboard/**"
+      - "scripts/dashboard/**"
+    tasks: ["build"]
+
+  # Core tools component
+  rust-tools:
+    depends_on:
+      - "rust-workspace"
+    paths:
+      - "core/tools/**"
+
+  # CI/CD workflow monitoring (informational, no tasks)
+  ci-workflows:
+    paths:
+      - ".github/workflows/**/*.yml"
+      - ".github/actions/**/*.yml"
+      - ".github/ci/**/*.yml"
+    tasks: ["validate"] # Could run workflow validation

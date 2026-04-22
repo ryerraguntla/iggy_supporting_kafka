@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AssemblyName>Apache.Iggy.Shared</AssemblyName>
+        <RootNamespace>Apache.Iggy.Shared</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Iggy_SDK\Iggy_SDK.csproj" />
+    </ItemGroup>
+
+</Project>

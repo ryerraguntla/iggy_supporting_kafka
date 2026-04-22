@@ -1,0 +1,166 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+use iggy_binary_protocol::consensus::iobuf::Owned;
+use iggy_binary_protocol::{Message, PrepareHeader};
+use iggy_common::variadic;
+use journal::{Journal, JournalHandle, Storage};
+use metadata::MuxStateMachine;
+use metadata::stm::consumer_group::ConsumerGroups;
+use metadata::stm::stream::Streams;
+use metadata::stm::user::Users;
+use std::cell::{Cell, RefCell, UnsafeCell};
+use std::collections::HashMap;
+
+/// In-memory storage backend for testing/simulation
+#[derive(Debug, Default)]
+pub struct MemStorage {
+    data: RefCell<Vec<u8>>,
+}
+
+#[allow(clippy::future_not_send)]
+impl Storage for MemStorage {
+    type Buffer = Vec<u8>;
+
+    async fn write_at(&self, offset: usize, buf: Self::Buffer) -> std::io::Result<usize> {
+        let len = buf.len();
+        let mut data = self.data.borrow_mut();
+        let end = offset + len;
+        if end > data.len() {
+            data.resize(end, 0);
+        }
+        data[offset..end].copy_from_slice(&buf);
+        Ok(len)
+    }
+
+    async fn read_at(
+        &self,
+        offset: usize,
+        mut buffer: Self::Buffer,
+    ) -> std::io::Result<Self::Buffer> {
+        let data = self.data.borrow();
+        let end = offset + buffer.len();
+        if offset < data.len() && end <= data.len() {
+            buffer[..].copy_from_slice(&data[offset..end]);
+        }
+        Ok(buffer)
+    }
+}
+
+// TODO: Replace with actual Journal, the only thing that we will need to change is the `Storage` impl for an in-memory one.
+/// Generic in-memory journal implementation for testing/simulation
+pub struct SimJournal<S: Storage> {
+    storage: S,
+    headers: UnsafeCell<HashMap<u64, PrepareHeader>>,
+    offsets: UnsafeCell<HashMap<u64, usize>>,
+    write_offset: Cell<usize>,
+}
+
+impl<S: Storage + Default> Default for SimJournal<S> {
+    fn default() -> Self {
+        Self {
+            storage: S::default(),
+            headers: UnsafeCell::new(HashMap::new()),
+            offsets: UnsafeCell::new(HashMap::new()),
+            write_offset: Cell::new(0),
+        }
+    }
+}
+
+#[allow(clippy::missing_fields_in_debug)]
+impl<S: Storage> std::fmt::Debug for SimJournal<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SimJournal")
+            .field("storage", &"<Storage>")
+            .field("headers", &"<UnsafeCell>")
+            .field("offsets", &"<UnsafeCell>")
+            .field("write_offset", &self.write_offset.get())
+            .finish()
+    }
+}
+
+#[allow(clippy::future_not_send)]
+impl<S: Storage<Buffer = Vec<u8>>> Journal<S> for SimJournal<S> {
+    type Header = PrepareHeader;
+    type Entry = Message<PrepareHeader>;
+    type HeaderRef<'a>
+        = &'a PrepareHeader
+    where
+        Self: 'a;
+
+    // TODO(hubcio): validate that the caller's checksum matches the stored
+    // header - currently this looks up by op only, ignoring the checksum.
+    // A real journal implementation must reject mismatches.
+    async fn entry(&self, header: &Self::Header) -> Option<Self::Entry> {
+        let headers = unsafe { &*self.headers.get() };
+        let offsets = unsafe { &*self.offsets.get() };
+
+        let header = headers.get(&header.op)?;
+        let offset = *offsets.get(&header.op)?;
+
+        let buffer = self
+            .storage
+            .read_at(offset, vec![0; header.size as usize])
+            .await
+            .ok()?;
+        let message = Message::try_from(Owned::<4096>::copy_from_slice(&buffer))
+            .expect("prepare buffer must contain a valid prepare message");
+        Some(message)
+    }
+
+    fn previous_header(&self, header: &Self::Header) -> Option<Self::HeaderRef<'_>> {
+        if header.op == 0 {
+            return None;
+        }
+        unsafe { &*self.headers.get() }.get(&(header.op - 1))
+    }
+
+    async fn append(&self, entry: Self::Entry) -> std::io::Result<()> {
+        let header = *entry.header();
+        let message_bytes = entry.into_frozen();
+        let offset = self.write_offset.get();
+
+        let bytes_written = self
+            .storage
+            .write_at(offset, message_bytes.as_slice().to_vec())
+            .await?;
+        unsafe { &mut *self.headers.get() }.insert(header.op, header);
+        unsafe { &mut *self.offsets.get() }.insert(header.op, offset);
+        self.write_offset.set(offset + bytes_written);
+        Ok(())
+    }
+
+    fn header(&self, idx: usize) -> Option<Self::HeaderRef<'_>> {
+        let headers = unsafe { &*self.headers.get() };
+        headers.get(&(idx as u64))
+    }
+}
+
+impl JournalHandle for SimJournal<MemStorage> {
+    type Storage = MemStorage;
+    type Target = Self;
+
+    fn handle(&self) -> &Self::Target {
+        self
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SimSnapshot {}
+
+/// Type alias for simulator state machine
+pub type SimMuxStateMachine = MuxStateMachine<variadic!(Users, Streams, ConsumerGroups)>;

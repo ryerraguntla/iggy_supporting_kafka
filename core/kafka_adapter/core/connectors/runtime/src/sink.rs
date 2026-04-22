@@ -1,0 +1,596 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use crate::configs::connectors::SinkConfig;
+use crate::context::RuntimeContext;
+use crate::log::LOG_CALLBACK;
+use crate::metrics::Metrics;
+use crate::{
+    PLUGIN_ID, RuntimeError, SinkApi, SinkConnector, SinkConnectorConsumer, SinkConnectorPlugin,
+    SinkConnectorWrapper, resolve_plugin_path, transform,
+};
+use dlopen2::wrapper::Container;
+use futures::StreamExt;
+use iggy::prelude::{
+    AutoCommit, AutoCommitWhen, IggyClient, IggyConsumer, IggyDuration, IggyMessage,
+    PollingStrategy,
+};
+use iggy_connector_sdk::{
+    DecodedMessage, MessagesMetadata, RawMessage, RawMessages, ReceivedMessage, StreamDecoder,
+    TopicMetadata, sink::ConsumeCallback, transforms::Transform,
+};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::{Arc, atomic::Ordering},
+    time::Instant,
+};
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info, warn};
+
+pub async fn init(
+    sink_configs: HashMap<String, SinkConfig>,
+    iggy_client: &IggyClient,
+) -> Result<HashMap<String, SinkConnector>, RuntimeError> {
+    let mut sink_connectors: HashMap<String, SinkConnector> = HashMap::new();
+    for (key, config) in sink_configs {
+        let name = config.name.clone();
+        if !config.enabled {
+            warn!("Sink: {name} is disabled ({key})");
+            continue;
+        }
+
+        let plugin_id = PLUGIN_ID.fetch_add(1, Ordering::SeqCst);
+        let path = resolve_plugin_path(&config.path)?;
+        info!(
+            "Initializing sink container with name: {name} ({key}), config version: {}, plugin: {path}",
+            &config.version
+        );
+        let init_error: Option<String>;
+        if let Some(container) = sink_connectors.get_mut(&path) {
+            info!("Sink container for plugin: {path} is already loaded.");
+            let version = get_plugin_version(&container.container);
+            init_error = init_sink(
+                &container.container,
+                &config.plugin_config.clone().unwrap_or_default(),
+                plugin_id,
+            )
+            .err()
+            .map(|error| error.to_string());
+            container.plugins.push(SinkConnectorPlugin {
+                id: plugin_id,
+                key: key.clone(),
+                name: name.clone(),
+                path: path.clone(),
+                version,
+                config_format: config.plugin_config_format,
+                consumers: vec![],
+                error: init_error.clone(),
+                verbose: config.verbose,
+            });
+        } else {
+            let container: Container<SinkApi> = unsafe {
+                Container::load(&path).map_err(|error| {
+                    RuntimeError::InvalidConfiguration(format!(
+                        "Failed to load sink container from {path}: {error}"
+                    ))
+                })?
+            };
+            info!("Sink container for plugin: {path} loaded successfully.");
+            let version = get_plugin_version(&container);
+            init_error = init_sink(
+                &container,
+                &config.plugin_config.clone().unwrap_or_default(),
+                plugin_id,
+            )
+            .err()
+            .map(|error| error.to_string());
+            sink_connectors.insert(
+                path.clone(),
+                SinkConnector {
+                    container,
+                    plugins: vec![SinkConnectorPlugin {
+                        id: plugin_id,
+                        key: key.clone(),
+                        name: name.clone(),
+                        path: path.clone(),
+                        version,
+                        config_format: config.plugin_config_format,
+                        consumers: vec![],
+                        error: init_error.clone(),
+                        verbose: config.verbose,
+                    }],
+                },
+            );
+        }
+
+        if let Some(error) = init_error {
+            error!("Failed to initialize sink container with name: {name} ({key}). {error}");
+            continue;
+        } else {
+            info!(
+                "Sink container with name: {name} ({key}), initialized successfully with ID: {plugin_id}."
+            );
+        }
+
+        let consumers = setup_sink_consumers(&key, &config, iggy_client).await?;
+        let connector = sink_connectors.get_mut(&path).ok_or_else(|| {
+            RuntimeError::InvalidConfiguration(format!("Sink connector not found for path: {path}"))
+        })?;
+        let plugin = connector
+            .plugins
+            .iter_mut()
+            .find(|p| p.id == plugin_id)
+            .ok_or_else(|| {
+                RuntimeError::InvalidConfiguration(format!(
+                    "Sink plugin not found for ID: {plugin_id}"
+                ))
+            })?;
+        for (consumer, decoder, batch_size, transforms) in consumers {
+            plugin.consumers.push(SinkConnectorConsumer {
+                consumer,
+                decoder,
+                batch_size,
+                transforms,
+            });
+        }
+    }
+
+    Ok(sink_connectors)
+}
+
+pub fn consume(
+    sinks: Vec<SinkConnectorWrapper>,
+    context: Arc<RuntimeContext>,
+) -> Vec<(String, watch::Sender<()>, Vec<JoinHandle<()>>)> {
+    let mut handles = Vec::new();
+    for sink in sinks {
+        for plugin in sink.plugins {
+            if let Some(error) = &plugin.error {
+                error!(
+                    "Failed to initialize sink connector with ID: {}: {error}. Skipping...",
+                    plugin.id,
+                );
+                continue;
+            }
+            info!("Starting consume for sink with ID: {}...", plugin.id);
+            let consumers = plugin
+                .consumers
+                .into_iter()
+                .map(|c| (c.consumer, c.decoder, c.batch_size, c.transforms))
+                .collect();
+            let (shutdown_tx, task_handles) = spawn_consume_tasks(
+                plugin.id,
+                &plugin.key,
+                consumers,
+                sink.callback,
+                plugin.verbose,
+                &context.metrics,
+                context.clone(),
+            );
+            handles.push((plugin.key, shutdown_tx, task_handles));
+        }
+    }
+    handles
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) fn spawn_consume_tasks(
+    plugin_id: u32,
+    plugin_key: &str,
+    consumers: Vec<(
+        IggyConsumer,
+        Arc<dyn StreamDecoder>,
+        u32,
+        Vec<Arc<dyn Transform>>,
+    )>,
+    callback: ConsumeCallback,
+    verbose: bool,
+    metrics: &Arc<Metrics>,
+    context: Arc<RuntimeContext>,
+) -> (watch::Sender<()>, Vec<JoinHandle<()>>) {
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
+    let mut task_handles = Vec::new();
+    for (consumer, decoder, batch_size, transforms) in consumers {
+        let plugin_key = plugin_key.to_string();
+        let metrics = metrics.clone();
+        let shutdown_rx = shutdown_rx.clone();
+        let context = context.clone();
+        let handle = tokio::spawn(async move {
+            if let Err(error) = consume_messages(
+                plugin_id,
+                decoder,
+                batch_size,
+                callback,
+                transforms,
+                consumer,
+                verbose,
+                &plugin_key,
+                &metrics,
+                shutdown_rx,
+            )
+            .await
+            {
+                error!(
+                    "Failed to consume messages for sink connector with ID: {plugin_id}: {error}"
+                );
+                context
+                    .sinks
+                    .set_error(&plugin_key, &error.to_string())
+                    .await;
+            }
+        });
+        task_handles.push(handle);
+    }
+    (shutdown_tx, task_handles)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn consume_messages(
+    plugin_id: u32,
+    decoder: Arc<dyn StreamDecoder>,
+    batch_size: u32,
+    consume: ConsumeCallback,
+    transforms: Vec<Arc<dyn Transform>>,
+    mut consumer: IggyConsumer,
+    verbose: bool,
+    plugin_key: &str,
+    metrics: &Arc<Metrics>,
+    mut shutdown_rx: watch::Receiver<()>,
+) -> Result<(), RuntimeError> {
+    info!("Started consuming messages for sink connector with ID: {plugin_id}");
+    let batch_size = batch_size as usize;
+    let mut batch = Vec::with_capacity(batch_size);
+    let topic_metadata = TopicMetadata {
+        stream: consumer.stream().to_string(),
+        topic: consumer.topic().to_string(),
+    };
+
+    loop {
+        let message = tokio::select! {
+            _ = shutdown_rx.changed() => {
+                info!("Sink connector with ID: {plugin_id} received shutdown signal");
+                break;
+            }
+            msg = consumer.next() => msg,
+        };
+
+        let Some(message) = message else {
+            break;
+        };
+        let Ok(message) = message else {
+            error!("Failed to receive message.");
+            continue;
+        };
+
+        let partition_id = message.partition_id;
+        let current_offset = message.current_offset;
+        let message_offset = message.message.header.offset;
+        batch.push(message.message);
+        if current_offset != message_offset && batch.len() < batch_size {
+            continue;
+        }
+
+        let messages = std::mem::take(&mut batch);
+        let messages_count = messages.len();
+        metrics.increment_messages_consumed(plugin_key, messages_count as u64);
+        let messages_metadata = MessagesMetadata {
+            partition_id,
+            current_offset,
+            schema: decoder.schema(),
+        };
+        if verbose {
+            info!(
+                "Processing {messages_count} messages for sink connector with ID: {}",
+                plugin_id
+            );
+        } else {
+            debug!(
+                "Processing {messages_count} messages for sink connector with ID: {}",
+                plugin_id
+            );
+        }
+        let start = Instant::now();
+        let processed_count = match process_messages(
+            plugin_id,
+            messages_metadata,
+            &topic_metadata,
+            messages,
+            &consume,
+            &transforms,
+            &decoder,
+        )
+        .await
+        {
+            Ok(count) => count,
+            Err(error) => {
+                error!(
+                    "Failed to process {messages_count} messages for sink connector with ID: {plugin_id}. {error}",
+                );
+                return Err(error);
+            }
+        };
+
+        metrics.increment_messages_processed(plugin_key, processed_count as u64);
+        let elapsed = start.elapsed();
+        if verbose {
+            info!(
+                "Consumed {messages_count} messages in {:#?} for sink connector with ID: {plugin_id}",
+                elapsed
+            );
+        } else {
+            debug!(
+                "Consumed {messages_count} messages in {:#?} for sink connector with ID: {plugin_id}",
+                elapsed
+            );
+        }
+    }
+    info!("Stopped consuming messages for sink connector with ID: {plugin_id}");
+    Ok(())
+}
+
+fn get_plugin_version(container: &Container<SinkApi>) -> String {
+    unsafe {
+        let version_ptr = (container.iggy_sink_version)();
+        std::ffi::CStr::from_ptr(version_ptr)
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+pub(crate) fn init_sink(
+    container: &Container<SinkApi>,
+    plugin_config: &serde_json::Value,
+    id: u32,
+) -> Result<(), RuntimeError> {
+    let plugin_config = serde_json::to_string(plugin_config).expect("Invalid sink plugin config.");
+    let result = (container.iggy_sink_open)(
+        id,
+        plugin_config.as_ptr(),
+        plugin_config.len(),
+        LOG_CALLBACK,
+    );
+    if result != 0 {
+        let error = format!("Plugin initialization failed (ID: {id})");
+        error!("{error}");
+        Err(RuntimeError::InvalidConfiguration(error))
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) async fn setup_sink_consumers(
+    key: &str,
+    config: &SinkConfig,
+    iggy_client: &IggyClient,
+) -> Result<
+    Vec<(
+        IggyConsumer,
+        Arc<dyn StreamDecoder>,
+        u32,
+        Vec<Arc<dyn Transform>>,
+    )>,
+    RuntimeError,
+> {
+    let transforms = if let Some(transforms_config) = &config.transforms {
+        let loaded = transform::load(transforms_config).map_err(|error| {
+            RuntimeError::InvalidConfiguration(format!("Failed to load transforms: {error}"))
+        })?;
+        for t in &loaded {
+            info!("Loaded transform: {:?} for sink: {key}", t.r#type());
+        }
+        loaded
+    } else {
+        vec![]
+    };
+
+    let mut consumers = Vec::new();
+    for stream in config.streams.iter() {
+        let poll_interval = IggyDuration::from_str(
+            stream.poll_interval.as_deref().unwrap_or("5ms"),
+        )
+        .map_err(|error| {
+            RuntimeError::InvalidConfiguration(format!("Invalid poll interval: {error}"))
+        })?;
+        let default_consumer_group = format!("iggy-connect-sink-{key}");
+        let consumer_group = stream
+            .consumer_group
+            .as_deref()
+            .unwrap_or(&default_consumer_group);
+        let batch_length = stream.batch_length.unwrap_or(1000);
+        for topic in stream.topics.iter() {
+            let mut consumer = iggy_client
+                .consumer_group(consumer_group, &stream.stream, topic)?
+                .auto_commit(AutoCommit::When(AutoCommitWhen::PollingMessages))
+                .create_consumer_group_if_not_exists()
+                .auto_join_consumer_group()
+                .polling_strategy(PollingStrategy::next())
+                .poll_interval(poll_interval)
+                .batch_length(batch_length)
+                .build();
+            consumer.init().await?;
+            consumers.push((
+                consumer,
+                stream.schema.decoder(),
+                batch_length,
+                transforms.clone(),
+            ));
+        }
+    }
+    Ok(consumers)
+}
+
+async fn process_messages(
+    plugin_id: u32,
+    messages_metadata: MessagesMetadata,
+    topic_metadata: &TopicMetadata,
+    messages: Vec<IggyMessage>,
+    consume: &ConsumeCallback,
+    transforms: &Vec<Arc<dyn Transform>>,
+    decoder: &Arc<dyn StreamDecoder>,
+) -> Result<usize, RuntimeError> {
+    let messages = messages.into_iter().map(|message| ReceivedMessage {
+        id: message.header.id,
+        offset: message.header.offset,
+        checksum: message.header.checksum,
+        timestamp: message.header.timestamp,
+        origin_timestamp: message.header.origin_timestamp,
+        headers: message.user_headers_map().unwrap_or(None),
+        payload: message.payload.into(),
+    });
+
+    let count = messages.len();
+    let decoded_messages = messages.into_iter().flat_map(|message| {
+        let Ok(payload) = decoder.decode(message.payload) else {
+            return None;
+        };
+
+        Some(DecodedMessage {
+            id: Some(message.id),
+            offset: Some(message.offset),
+            checksum: Some(message.checksum),
+            timestamp: Some(message.timestamp),
+            origin_timestamp: Some(message.origin_timestamp),
+            headers: message.headers,
+            payload,
+        })
+    });
+    let mut messages = Vec::with_capacity(count);
+    for message in decoded_messages {
+        let mut current_message = Some(message);
+        for transform in transforms.iter() {
+            let Some(message) = current_message else {
+                break;
+            };
+
+            current_message = transform.transform(topic_metadata, message)?;
+        }
+
+        // The transform may return no message based on some conditions
+        let Some(message) = current_message else {
+            continue;
+        };
+
+        let Some(id) = message.id else {
+            error!(
+                "ID should be present. Failed to process message for sink connector with ID: {plugin_id}"
+            );
+            continue;
+        };
+
+        let Some(offset) = message.offset else {
+            error!(
+                "Offset should be present. Failed to process message with ID: {id} for sink connector with ID: {plugin_id}"
+            );
+            continue;
+        };
+
+        let Some(checksum) = message.checksum else {
+            error!(
+                "Checksum should be present. Failed to process message with ID: {id}, offset: {offset} for sink connector with ID: {plugin_id}"
+            );
+            continue;
+        };
+
+        let Some(timestamp) = message.timestamp else {
+            error!(
+                "Timestamp should be present. Failed to process message with ID: {id}, offset: {offset} for sink connector with ID: {plugin_id}"
+            );
+            continue;
+        };
+
+        let Some(origin_timestamp) = message.origin_timestamp else {
+            error!(
+                "Origin timestamp should be present. Failed to process message with ID: {id}, offset: {offset} for sink connector with ID: {plugin_id}"
+            );
+            continue;
+        };
+
+        let Ok(payload) = message.payload.try_into_vec() else {
+            error!(
+                "Failed to get message payload for message with ID: {id}, offset: {offset} for sink connector with ID: {plugin_id}"
+            );
+            continue;
+        };
+
+        let headers: Result<Vec<u8>, RuntimeError> = if let Some(headers) = message.headers {
+            Ok(postcard::to_allocvec(&headers).map_err(|error| {
+                error!("Failed to serialize headers for message with ID: {id}, offset: {offset} for sink connector with ID: {plugin_id}. {error}");
+                RuntimeError::FailedToSerializeHeaders
+            })?)
+        } else {
+            Ok(vec![])
+        };
+
+        let Ok(headers) = headers else {
+            error!(
+                "Failed to serialize message headers for message with ID: {id}, offset: {offset} for sink connector with ID: {plugin_id}"
+            );
+            continue;
+        };
+
+        messages.push(RawMessage {
+            id,
+            offset,
+            checksum,
+            timestamp,
+            origin_timestamp,
+            headers,
+            payload,
+        });
+    }
+
+    let processed_count = messages.len();
+
+    let topic_meta = postcard::to_allocvec(topic_metadata).map_err(|error| {
+        error!(
+            "Failed to serialize topic metadata for sink connector with ID: {plugin_id}. {error}"
+        );
+        RuntimeError::FailedToSerializeTopicMetadata
+    })?;
+
+    let messages_meta = postcard::to_allocvec(&messages_metadata).map_err(|error| {
+        error!(
+            "Failed to serialize messages metadata for sink connector with ID: {plugin_id}. {error}"
+        );
+        RuntimeError::FailedToSerializeMessagesMetadata
+    })?;
+
+    let messages = postcard::to_allocvec(&RawMessages {
+        schema: decoder.schema(),
+        messages,
+    })
+    .map_err(|error| {
+        error!("Failed to serialize messages for sink connector with ID: {plugin_id}. {error}");
+        RuntimeError::FailedToSerializeRawMessages
+    })?;
+
+    (consume)(
+        plugin_id,
+        topic_meta.as_ptr(),
+        topic_meta.len(),
+        messages_meta.as_ptr(),
+        messages_meta.len(),
+        messages.as_ptr(),
+        messages.len(),
+    );
+
+    Ok(processed_count)
+}

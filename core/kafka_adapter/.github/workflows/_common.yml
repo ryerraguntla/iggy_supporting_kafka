@@ -1,0 +1,436 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: _common
+on:
+  workflow_call:
+    inputs:
+      skip_pr_title:
+        type: boolean
+        required: false
+        default: false
+        description: "Skip PR title check (for push events)"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  rust-versions:
+    name: Check Rust versions sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Rust versions are synchronized
+        run: ./scripts/ci/sync-rust-version.sh --check
+
+  python-versions:
+    name: Check Python SDK versions sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Python SDK versions are synchronized
+        run: ./scripts/ci/python-sdk-version-sync.sh --check
+
+  version-consistency:
+    name: Check version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup yq
+        run: |
+          if ! command -v yq >/dev/null 2>&1; then
+            YQ_VERSION="v4.47.1"
+            YQ_CHECKSUM="0fb28c6680193c41b364193d0c0fc4a03177aecde51cfc04d506b1517158c2fb"
+            curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64
+            echo "${YQ_CHECKSUM}  /usr/local/bin/yq" | sha256sum -c - || exit 1
+            chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Check version consistency
+        run: ./scripts/extract-version.sh --check
+
+  pr-title:
+    name: Check PR Title
+    if: github.event_name == 'pull_request' && !inputs.skip_pr_title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR Title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+            repo
+            deps
+          scopes: |
+            bdd
+            bench
+            ci
+            cli
+            clock
+            connector
+            connectors
+            cpp
+            csharp
+            deps
+            deps-dev
+            docs
+            example
+            go
+            helm
+            integration
+            io_uring
+            java
+            journal
+            js
+            mcp
+            partitions
+            proc
+            pr_template
+            python
+            repo
+            rust
+            sdk
+            security
+            server
+            server-ng
+            shard
+            test
+            web
+            consensus
+            cluster
+            metadata
+            message_bus
+            storage
+            simulator
+            configs
+
+  license-headers:
+    name: Check license headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: ./.github/actions/utils/setup-go-with-cache
+        with:
+          go-version: "1.23"
+          download-deps: "false"
+
+      - name: Install addlicense
+        run: go install github.com/google/addlicense@4529cd558fa0bf07ab0f2650e36d089fb1c07c89
+
+      - name: Check Apache license headers
+        run: ./scripts/ci/license-headers.sh --check
+
+  license-list:
+    name: Check licenses list
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/utils/setup-rust-with-cache
+        with:
+          read-cache: "false"
+
+      - name: Install cargo-license
+        run: cargo install cargo-license
+
+      - run: ./scripts/ci/licenses-list.sh --check
+
+  markdown:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "23"
+
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: Run markdownlint
+        run: ./scripts/ci/markdownlint.sh --check
+
+  shellcheck:
+    name: Shell scripts lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          SHELLCHECK_VERSION="0.11.0"
+          wget -qO- "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" | tar -xJv
+          sudo cp "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/
+
+      - name: Check shell scripts
+        run: ./scripts/ci/shellcheck.sh --check
+
+  trailing-whitespace:
+    name: Check trailing whitespace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history to get diff
+
+      - name: Check for trailing whitespace in changed files
+        run: ./scripts/ci/trailing-whitespace.sh --check --ci
+
+  trailing-newline:
+    name: Check trailing newline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history to get diff
+
+      - name: Check for trailing newline in changed text files
+        run: ./scripts/ci/trailing-newline.sh --check --ci
+
+  toml-format:
+    name: Check TOML formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history to get diff
+
+      - name: Install taplo
+        run: |
+          curl -fsSL https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz | gunzip > taplo
+          chmod +x taplo
+          sudo mv taplo /usr/local/bin/
+
+      - name: Check TOML formatting
+        run: ./scripts/ci/taplo.sh --check --ci
+
+  binary-artifacts:
+    name: Check binary artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for binary artifacts
+        run: ./scripts/ci/binary-artifacts.sh --check --ci
+
+  typos:
+    name: Check typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check typos
+        uses: crate-ci/typos@v1.41.0
+
+  summary:
+    name: Common checks summary
+    needs:
+      [
+        rust-versions,
+        python-versions,
+        version-consistency,
+        pr-title,
+        license-headers,
+        license-list,
+        markdown,
+        shellcheck,
+        trailing-whitespace,
+        trailing-newline,
+        toml-format,
+        binary-artifacts,
+        typos,
+      ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "## 📋 Common Checks Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status | Description |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|-------------|" >> $GITHUB_STEP_SUMMARY
+
+          # PR-specific checks
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_TITLE="${{ needs.pr-title.result }}"
+
+            # Add emoji based on status
+            if [ "$PR_TITLE" = "success" ]; then
+              echo "| ✅ PR Title | success | Follows conventional format |" >> $GITHUB_STEP_SUMMARY
+            elif [ "$PR_TITLE" = "failure" ]; then
+              echo "| ❌ PR Title | failure | Must follow conventional format |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| ⏭️ PR Title | $PR_TITLE | Check skipped |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| ⏭️ PR Title | skipped | Not a pull request |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Always-run checks
+          RUST_VERSIONS="${{ needs.rust-versions.result }}"
+          PYTHON_VERSIONS="${{ needs.python-versions.result }}"
+          VERSION_CONSISTENCY="${{ needs.version-consistency.result }}"
+          LICENSE_HEADERS="${{ needs.license-headers.result }}"
+          LICENSE_LIST="${{ needs.license-list.result }}"
+          MARKDOWN="${{ needs.markdown.result }}"
+
+          if [ "$RUST_VERSIONS" = "success" ]; then
+            echo "| ✅ Rust Versions | success | All Rust versions synchronized |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$RUST_VERSIONS" = "failure" ]; then
+            echo "| ❌ Rust Versions | failure | Rust versions mismatch in Dockerfiles |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Rust Versions | $RUST_VERSIONS | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$PYTHON_VERSIONS" = "success" ]; then
+            echo "| ✅ Python SDK Versions | success | Cargo.toml and pyproject.toml synchronized |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$PYTHON_VERSIONS" = "failure" ]; then
+            echo "| ❌ Python SDK Versions | failure | Version mismatch between Cargo.toml and pyproject.toml |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Python SDK Versions | $PYTHON_VERSIONS | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$VERSION_CONSISTENCY" = "success" ]; then
+            echo "| ✅ Version Consistency | success | Group and workspace dep versions match |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$VERSION_CONSISTENCY" = "failure" ]; then
+            echo "| ❌ Version Consistency | failure | Version mismatch detected |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Version Consistency | $VERSION_CONSISTENCY | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$LICENSE_HEADERS" = "success" ]; then
+            echo "| ✅ License Headers | success | All files have Apache headers |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$LICENSE_HEADERS" = "failure" ]; then
+            echo "| ❌ License Headers | failure | Missing Apache license headers |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ License Headers | $LICENSE_HEADERS | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$LICENSE_LIST" = "success" ]; then
+            echo "| ✅ License List | success | Dependencies licenses validated |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$LICENSE_LIST" = "failure" ]; then
+            echo "| ❌ License List | failure | License list needs update |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ License List | $LICENSE_LIST | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$MARKDOWN" = "success" ]; then
+            echo "| ✅ Markdown Lint | success | All markdown files are valid |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$MARKDOWN" = "failure" ]; then
+            echo "| ❌ Markdown Lint | failure | Markdown formatting issues found |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Markdown Lint | $MARKDOWN | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          SHELLCHECK="${{ needs.shellcheck.result }}"
+          if [ "$SHELLCHECK" = "success" ]; then
+            echo "| ✅ Shellcheck | success | All shell scripts are valid |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$SHELLCHECK" = "failure" ]; then
+            echo "| ❌ Shellcheck | failure | Shell script issues found |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Shellcheck | $SHELLCHECK | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          TRAILING="${{ needs.trailing-whitespace.result }}"
+          if [ "$TRAILING" = "success" ]; then
+            echo "| ✅ Trailing Whitespace | success | No trailing whitespace found |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$TRAILING" = "failure" ]; then
+            echo "| ❌ Trailing Whitespace | failure | Trailing whitespace detected |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Trailing Whitespace | $TRAILING | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          TRAILING_NL="${{ needs.trailing-newline.result }}"
+          if [ "$TRAILING_NL" = "success" ]; then
+            echo "| ✅ Trailing Newline | success | All text files have trailing newlines |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$TRAILING_NL" = "failure" ]; then
+            echo "| ❌ Trailing Newline | failure | Missing trailing newlines detected |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Trailing Newline | $TRAILING_NL | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          BINARY_ARTIFACTS="${{ needs.binary-artifacts.result }}"
+          if [ "$BINARY_ARTIFACTS" = "success" ]; then
+            echo "| ✅ Binary Artifacts | success | No binary artifacts found |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$BINARY_ARTIFACTS" = "failure" ]; then
+            echo "| ❌ Binary Artifacts | failure | Binary artifacts detected in commit |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Binary Artifacts | $BINARY_ARTIFACTS | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          TOML_FORMAT="${{ needs.toml-format.result }}"
+          if [ "$TOML_FORMAT" = "success" ]; then
+            echo "| ✅ TOML Format | success | All TOML files properly formatted |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$TOML_FORMAT" = "failure" ]; then
+            echo "| ❌ TOML Format | failure | TOML formatting issues found |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ TOML Format | $TOML_FORMAT | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          TYPOS="${{ needs.typos.result }}"
+          if [ "$TYPOS" = "success" ]; then
+            echo "| ✅ Typos Check | success | All files are free of spelling typos |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$TYPOS" = "failure" ]; then
+            echo "| ❌ Typos Check | failure | Spelling typos detected (run 'typos -w' to fix) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Typos Check | $TYPOS | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Overall status
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "### ❌ Some checks failed" >> $GITHUB_STEP_SUMMARY
+            echo "Please review the failed checks above and fix the issues." >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ contains(needs.*.result, 'skipped') }}" == "true" ]]; then
+            echo "### ⚠️ Some checks were skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ✅ All checks passed!" >> $GITHUB_STEP_SUMMARY
+          fi

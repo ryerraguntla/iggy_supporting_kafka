@@ -1,0 +1,294 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+default_stages: [pre-commit]
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  # Standard pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        exclude: ^helm/charts/.*/templates/
+      - id: mixed-line-ending
+
+  # Python formatting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^(foreign|bdd|examples)/python/.*\.(py|pyi)$
+      - id: ruff-format
+        files: ^(foreign|bdd|examples)/python/.*\.(py|pyi)$
+
+  # CI scripts
+  - repo: local
+    hooks:
+      - id: markdownlint
+        name: markdownlint
+        entry: ./scripts/ci/markdownlint.sh
+        args: ["--fix", "--staged"]
+        language: system
+        types: [markdown]
+        pass_filenames: false
+
+      - id: shellcheck
+        name: shellcheck
+        entry: ./scripts/ci/shellcheck.sh
+        args: ["--fix", "--staged"]
+        language: system
+        types: [shell]
+        pass_filenames: false
+
+      - id: license-headers
+        name: license headers
+        entry: ./scripts/ci/license-headers.sh
+        args: ["--fix"]
+        language: system
+        pass_filenames: false
+
+      - id: licenses-list
+        name: licenses list
+        entry: ./scripts/ci/licenses-list.sh
+        args: ["--fix"]
+        language: system
+        files: ^Cargo\.lock$
+        pass_filenames: false
+
+      - id: rust-version-sync
+        name: rust version sync
+        entry: ./scripts/ci/sync-rust-version.sh
+        args: ["--fix"]
+        language: system
+        files: ^rust-toolchain\.toml$
+        pass_filenames: false
+
+      - id: python-sdk-version-sync
+        name: python sdk version sync
+        entry: ./scripts/ci/python-sdk-version-sync.sh
+        args: ["--fix"]
+        language: system
+        files: ^foreign/python/(Cargo\.toml|pyproject\.toml)$
+        pass_filenames: false
+
+      - id: uv-lock-check
+        name: uv lock check
+        entry: ./scripts/ci/uv-lock-check.sh
+        args: ["--fix"]
+        language: system
+        files: ^(foreign|bdd|examples)/python/(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+
+      - id: version-consistency
+        name: version consistency
+        entry: ./scripts/extract-version.sh
+        args: ["--check"]
+        language: system
+        files: (^Cargo\.toml$|^(core|foreign)/.*Cargo\.toml$|^foreign/node/package\.json$|^foreign/python/pyproject\.toml$|^foreign/csharp/.*\.csproj$|^foreign/java/gradle\.properties$|^foreign/go/contracts/version\.go$|^\.github/config/publish\.yml$)
+        pass_filenames: false
+
+      - id: trailing-whitespace
+        name: trailing whitespace
+        entry: ./scripts/ci/trailing-whitespace.sh
+        args: ["--fix", "--staged"]
+        language: system
+        types: [text]
+        pass_filenames: false
+
+      - id: trailing-newline
+        name: trailing newline
+        entry: ./scripts/ci/trailing-newline.sh
+        args: ["--fix", "--staged"]
+        language: system
+        types: [text]
+        pass_filenames: false
+
+      - id: binary-artifacts
+        name: binary artifacts
+        entry: ./scripts/ci/binary-artifacts.sh
+        args: ["--check", "--staged"]
+        language: system
+        pass_filenames: false
+
+      - id: typos
+        name: typos (spelling check)
+        entry: typos
+        args: [ "-w" ]
+        language: system
+        types: [ text ]
+        pass_filenames: false
+
+      - id: taplo
+        name: taplo (TOML format)
+        entry: ./scripts/ci/taplo.sh
+        args: ["--fix", "--staged"]
+        language: system
+        types: [toml]
+        pass_filenames: false
+
+  # Rust
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-sort
+        name: cargo sort
+        entry: cargo sort --no-format --workspace
+        language: system
+        files: (^|/)Cargo\.toml$
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy
+        args:
+          [
+            "--all-features",
+            "--all-targets",
+            "--manifest-path",
+            "Cargo.toml",
+            "--",
+            "-D",
+            "warnings",
+          ]
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]
+
+  # Go SDK formatting
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: go fmt
+        entry: bash -c 'for dir in foreign/go bdd/go examples/go; do [ -d "$dir" ] && (cd "$dir" && gofmt -w -s .); done'
+        language: system
+        files: ^(foreign|bdd|examples)/go/.*\.go$
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: go mod tidy
+        entry: bash -c 'for dir in foreign/go bdd/go examples/go; do [ -f "$dir/go.mod" ] && (cd "$dir" && go mod tidy && git diff --exit-code go.mod go.sum); done'
+        language: system
+        files: ^(foreign|bdd|examples)/go/(.*\.go|go\.mod|go\.sum)$
+        pass_filenames: false
+
+  # Go SDK linting (version must match CI: .github/actions/go/pre-merge/action.yml)
+  - repo: local
+    hooks:
+      - id: golangci-lint-foreign
+        name: golangci-lint (foreign/go)
+        entry: bash -c 'cd foreign/go && golangci-lint run --timeout=5m ./...'
+        language: golang
+        additional_dependencies:
+          ["github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8"]
+        files: ^foreign/go/.*\.go$
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: golangci-lint-bdd
+        name: golangci-lint (bdd/go)
+        entry: bash -c 'cd bdd/go && golangci-lint run --timeout=5m ./...'
+        language: golang
+        additional_dependencies:
+          ["github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8"]
+        files: ^bdd/go/.*\.go$
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: golangci-lint-examples
+        name: golangci-lint (examples/go)
+        entry: bash -c 'cd examples/go && golangci-lint run --timeout=5m ./...'
+        language: golang
+        additional_dependencies:
+          ["github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8"]
+        files: ^examples/go/.*\.go$
+        pass_filenames: false
+        stages: [pre-push]
+
+  # Node.js linting
+  - repo: local
+    hooks:
+      - id: node-eslint
+        name: node eslint
+        entry: bash -c 'for dir in foreign/node examples/node; do [ -f "$dir/package.json" ] && (cd "$dir" && npm run lint); done'
+        language: system
+        files: ^(foreign|examples)/node/.*\.ts$
+        pass_filenames: false
+
+  # Web UI linting (Svelte + TypeScript)
+  - repo: local
+    hooks:
+      - id: web-lint
+        name: web lint
+        entry: bash -c 'cd web && npm run lint'
+        language: system
+        files: ^web/.*\.(ts|js|svelte)$
+        pass_filenames: false
+
+  # Java SDK linting (Checkstyle + Spotless via Gradle)
+  - repo: local
+    hooks:
+      - id: java-gradle-check
+        name: java gradle check
+        entry: bash -c 'for dir in foreign/java bdd/java examples/java; do [ -f "$dir/build.gradle.kts" ] && (cd "$dir" && ./gradlew check -x test); done'
+        language: system
+        files: ^(foreign|bdd|examples)/java/.*\.(java|kt|kts)$
+        pass_filenames: false
+        stages: [pre-push]
+
+  # C# SDK formatting
+  - repo: local
+    hooks:
+      - id: csharp-dotnet-format
+        name: csharp dotnet format
+        entry: bash -c 'dotnet format foreign/csharp/Iggy_SDK.sln --verify-no-changes && dotnet format examples/csharp/Iggy_SDK.Examples.sln --verify-no-changes'
+        language: system
+        files: ^(foreign|examples)/csharp/.*\.cs$
+        pass_filenames: false
+        stages: [pre-push]
+
+  # Helm chart formatting and linting
+  - repo: local
+    hooks:
+      - id: helmfmt
+        name: helmfmt
+        entry: helmfmt
+        language: system
+        files: ^helm/charts/.*/templates/.*\.(yaml|tpl)$
+        pass_filenames: true
+
+      - id: yamllint-helm
+        name: yamllint (helm)
+        entry: yamllint -c helm/charts/iggy/.yamllint.yml
+        language: system
+        files: ^helm/charts/iggy/(values\.yaml|Chart\.yaml)$
+        pass_filenames: true
+
+      - id: helm-docs
+        name: helm-docs
+        entry: bash -c 'cd helm/charts/iggy && helm-docs'
+        language: system
+        files: ^helm/charts/iggy/(values\.yaml|README\.md\.gotmpl)$
+        pass_filenames: false

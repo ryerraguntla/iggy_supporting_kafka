@@ -1,0 +1,85 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+[package]
+name = "integration"
+version = "0.0.1"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+# Some tests are failing in CI due to lack of IPv6 interfaces
+# inside the docker containers. This is a temporary workaround (hopefully).
+[features]
+ci-qemu = []
+
+[dependencies]
+assert_cmd = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bon = { workspace = true }
+bytes = { workspace = true }
+compio = { workspace = true }
+configs = { workspace = true }
+configs_derive = { workspace = true }
+ctor = { workspace = true }
+figment = { workspace = true }
+futures = { workspace = true }
+harness_derive = { workspace = true }
+humantime = { workspace = true }
+iggy = { workspace = true }
+iggy-cli = { workspace = true }
+iggy_binary_protocol = { workspace = true }
+iggy_common = { workspace = true }
+iggy_connector_sdk = { workspace = true, features = ["api"] }
+jsonwebtoken = { workspace = true }
+keyring = { workspace = true }
+lazy_static = { workspace = true }
+libc = { workspace = true }
+mongodb = { workspace = true }
+once_cell = { workspace = true }
+predicates = { workspace = true }
+rand = { workspace = true }
+rcgen = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+reqwest-middleware = { workspace = true }
+reqwest-retry = { workspace = true }
+rmcp = { workspace = true, features = [
+    "client",
+    "reqwest",
+    "transport-streamable-http-client",
+    "transport-streamable-http-client-reqwest",
+] }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serial_test = { workspace = true }
+server = { workspace = true }
+socket2 = { workspace = true }
+sqlx = { workspace = true }
+sysinfo = { workspace = true }
+tempfile = { workspace = true }
+test-case = { workspace = true }
+testcontainers-modules = { workspace = true }
+tokio = { workspace = true, features = ["full", "test-util"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+twox-hash = { workspace = true }
+uuid = { workspace = true }
+wiremock = "0.6"
+zip = { workspace = true }

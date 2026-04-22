@@ -1,0 +1,183 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: java-gradle-pre-merge
+description: Java Gradle pre-merge testing github iggy actions
+
+inputs:
+  task:
+    description: "Task to run (lint, test, build)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Java with cache
+      uses: ./.github/actions/utils/setup-java-with-cache
+      with:
+        gradle-cache-disabled: "true"
+
+    - name: Lint SDK
+      if: inputs.task == 'lint'
+      shell: bash
+      working-directory: foreign/java
+      run: |
+        echo "::group::Linting foreign/java"
+        ./gradlew check -x test
+        echo "::endgroup::"
+
+    - name: Lint examples
+      if: inputs.task == 'lint'
+      shell: bash
+      working-directory: examples/java
+      run: |
+        echo "::group::Linting examples/java"
+        ./gradlew check -x test
+        echo "::endgroup::"
+
+    - name: Lint BDD
+      if: inputs.task == 'lint'
+      shell: bash
+      working-directory: bdd/java
+      run: |
+        echo "::group::Linting bdd/java"
+        ./gradlew check -x test
+        echo "::endgroup::"
+
+    - name: Build
+      shell: bash
+      if: inputs.task == 'build'
+      working-directory: foreign/java
+      run: |
+        ./gradlew build -x test -x checkstyleMain -x checkstyleTest -x spotlessCheck
+        BUILD_EXIT_CODE=$?
+
+        # List artifacts only if build succeeded
+        if [ $BUILD_EXIT_CODE -eq 0 ]; then
+          echo ""
+          echo "Build artifacts:"
+          find . -path "*/build/libs/*.jar" -type f 2>/dev/null | head -20 || echo "No jar artifacts found in build/libs directories"
+        fi
+
+        # Exit with build exit code
+        exit $BUILD_EXIT_CODE
+
+    - name: Setup Rust with cache
+      if: inputs.task == 'test'
+      uses: ./.github/actions/utils/setup-rust-with-cache
+
+    - name: Start Iggy server
+      if: inputs.task == 'test'
+      id: iggy
+      uses: ./.github/actions/utils/server-start
+
+    - name: Test
+      if: inputs.task == 'test'
+      shell: bash
+      working-directory: foreign/java
+      env:
+        USE_EXTERNAL_SERVER: true
+      run: ./gradlew test
+
+    - name: Check for ByteBuf leaks
+      if: ${{ !cancelled() && inputs.task == 'test' }}
+      shell: bash
+      run: |
+        if grep -r "LEAK:" foreign/java/java-sdk/build/test-results/ 2>/dev/null; then
+          echo "::error::Netty ByteBuf memory leaks detected in test output!"
+          exit 1
+        fi
+        echo "No ByteBuf leaks detected"
+
+    - name: Generate coverage report
+      if: inputs.task == 'test'
+      shell: bash
+      working-directory: foreign/java
+      env:
+        USE_EXTERNAL_SERVER: true
+      run: ./gradlew jacocoAggregatedReport
+
+    - name: Copy coverage reports
+      if: ${{ !cancelled() && inputs.task == 'test' }}
+      shell: bash
+      run: |
+        if [ -f "foreign/java/build/reports/jacoco/aggregate/jacocoAggregated.xml" ]; then
+          echo "Found aggregated coverage report"
+          mkdir -p reports/java-coverage
+          cp foreign/java/build/reports/jacoco/aggregate/jacocoAggregated.xml reports/java-coverage/
+          if [ -d "foreign/java/build/reports/jacoco/aggregate/html" ]; then
+            cp -r foreign/java/build/reports/jacoco/aggregate/html reports/java-coverage/
+          fi
+        fi
+
+    - name: Copy test reports
+      if: ${{ !cancelled() && inputs.task == 'test' }}
+      shell: bash
+      run: |
+        if [ -d "foreign/java/java-sdk/build/test-results" ]; then
+          echo "Found test reports in java-sdk"
+          mkdir -p reports/java-tests
+          cp -r foreign/java/java-sdk/build/test-results reports/java-tests/sdk
+        fi
+        if [ -d "foreign/java/external-processors/iggy-connector-flink/iggy-connector-library/build/test-results" ]; then
+          echo "Found test reports in flink"
+          mkdir -p reports/java-tests
+          cp -r foreign/java/external-processors/iggy-connector-flink/iggy-connector-library/build/test-results reports/java-tests/flink
+        fi
+
+    - name: Stop Iggy server
+      if: always() && inputs.task == 'test'
+      uses: ./.github/actions/utils/server-stop
+      with:
+        pid-file: ${{ steps.iggy.outputs.pid_file }}
+        log-file: ${{ steps.iggy.outputs.log_file }}
+
+    - name: Start Iggy server (TLS)
+      id: iggy-tls
+      if: inputs.task == 'test'
+      uses: ./.github/actions/utils/server-start
+      with:
+        pid-file: ${{ runner.temp }}/iggy-server-tls.pid
+        log-file: ${{ runner.temp }}/iggy-server-tls.log
+      env:
+        IGGY_TCP_TLS_ENABLED: "true"
+        IGGY_TCP_TLS_CERT_FILE: core/certs/iggy_cert.pem
+        IGGY_TCP_TLS_KEY_FILE: core/certs/iggy_key.pem
+
+    - name: TLS integration tests
+      if: inputs.task == 'test'
+      shell: bash
+      working-directory: foreign/java
+      env:
+        USE_EXTERNAL_SERVER: true
+        IGGY_TCP_TLS_ENABLED: "true"
+      run: ./gradlew :iggy:test --tests "*TlsConnectionTest*"
+
+    - name: Stop Iggy server (TLS)
+      if: always() && inputs.task == 'test'
+      uses: ./.github/actions/utils/server-stop
+      with:
+        pid-file: ${{ steps.iggy-tls.outputs.pid_file }}
+        log-file: ${{ steps.iggy-tls.outputs.log_file }}
+
+    - name: Test Summary
+      uses: test-summary/action@v2
+      with:
+        paths: |
+          foreign/java/java-sdk/build/test-results/**/TEST-*.xml
+          foreign/java/external-processors/iggy-connector-flink/iggy-connector-library/build/test-results/**/TEST-*.xml
+      if: ${{ !cancelled() && inputs.task == 'test' }}
