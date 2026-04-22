@@ -1,0 +1,11 @@
+error: failed to load manifest for workspace member `/Users/raviyerraguntla/IdeaProjects/iggy_supporting_kafka/bdd/rust`
+referenced by workspace at `/Users/raviyerraguntla/IdeaProjects/iggy_supporting_kafka/Cargo.toml`
+
+Caused by:
+  failed to load manifest for dependency `iggy`
+
+Caused by:
+  failed to read `/Users/raviyerraguntla/IdeaProjects/iggy_supporting_kafka/core/sdk/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
