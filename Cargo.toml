@@ -1,0 +1,16 @@
+[package]
+name = "iggy_supporting_kafka"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Standalone Kafka listener and protocol foundation for Iggy compatibility"
+
+[dependencies]
+bytes = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
