@@ -1,0 +1,26 @@
+[package]
+name = "kafka-message-gen"
+version = "0.1.0"
+edition = "2021"
+description = "Generates binary Kafka protocol messages for every API key and version — for testing Kafka-compatible server implementations such as Apache Iggy"
+authors = ["Iggy Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/ryerraguntla/iggy_supporting_kafka"
+keywords = ["kafka", "protocol", "testing", "iggy", "wire-format"]
+
+[dependencies]
+kafka-protocol = "0.13"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+hex = "0.4"
+indexmap = "2"
+
+[[bin]]
+name = "kafka-message-gen"
+path = "src/main.rs"
