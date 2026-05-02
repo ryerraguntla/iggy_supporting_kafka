@@ -17,16 +17,8 @@ pub struct ApiVersionRange {
 
 pub fn supported_api_ranges() -> Vec<ApiVersionRange> {
     vec![
-        ApiVersionRange {
-            api_key: API_KEY_API_VERSIONS,
-            min_version: 0,
-            max_version: 3,
-        },
-        ApiVersionRange {
-            api_key: API_KEY_METADATA,
-            min_version: 0,
-            max_version: 1,
-        },
+        ApiVersionRange { api_key: API_KEY_API_VERSIONS, min_version: 0, max_version: 3 },
+        ApiVersionRange { api_key: API_KEY_METADATA,     min_version: 0, max_version: 1 },
     ]
 }
 
@@ -59,35 +51,52 @@ pub fn is_supported_version(api_key: i16, api_version: i16) -> bool {
 }
 
 fn encode_api_versions_response(api_version: i16, error_code: i16) -> Bytes {
-    // Non-flexible baseline response schema for versions <= 3:
-    // error_code => i16
-    // api_versions => [api_key i16, min_version i16, max_version i16]
-    // throttle_time_ms => i32
-    let mut e = Encoder::with_capacity(128);
-    e.write_i16(error_code);
+    // ApiVersions v3+ uses flexible encoding (compact arrays, tagged fields).
+    // v0-2 uses the legacy fixed-width encoding.
+    let flexible = api_version >= 3;
     let ranges = supported_api_ranges();
-    e.write_i32(ranges.len() as i32);
-    for r in ranges {
-        e.write_i16(r.api_key);
-        e.write_i16(r.min_version);
-        e.write_i16(r.max_version);
+    let mut e = Encoder::with_capacity(128);
+
+    e.write_i16(error_code);
+
+    if flexible {
+        // COMPACT_ARRAY: varint(len + 1); each entry ends with empty tagged fields.
+        e.write_varint((ranges.len() + 1) as u64);
+        for r in &ranges {
+            e.write_i16(r.api_key);
+            e.write_i16(r.min_version);
+            e.write_i16(r.max_version);
+            e.write_empty_tagged_fields();
+        }
+    } else {
+        e.write_i32(ranges.len() as i32);
+        for r in &ranges {
+            e.write_i16(r.api_key);
+            e.write_i16(r.min_version);
+            e.write_i16(r.max_version);
+        }
     }
 
     if api_version >= 1 {
         e.write_i32(0); // throttle_time_ms
     }
+
+    if flexible {
+        e.write_empty_tagged_fields(); // top-level tagged fields section
+    }
+
     e.freeze()
 }
 
 fn encode_metadata_response(_api_version: i16, body: Bytes, top_level_error_code: i16) -> Bytes {
-    // Minimal schema aligned with v0/v1 compatible baseline:
-    // brokers => [node_id i32, host string, port i32]
-    // topic_metadata => [topic_error_code i16, topic string, partitions [..]]
+    // Minimal v0/v1-compatible response (non-flexible — Metadata is non-flexible below v9).
+    // brokers => [node_id i32, host NULLABLE_STRING, port i32]
+    // topic_metadata => [topic_error_code i16, topic NULLABLE_STRING, partitions [..]]
+    // controller_id => i32  (written unconditionally for baseline compat)
     let mut e = Encoder::with_capacity(256);
 
-    // brokers
-    e.write_i32(1);
-    e.write_i32(1);
+    e.write_i32(1); // broker count
+    e.write_i32(1); // node_id
     e.write_nullable_string(Some("127.0.0.1"));
     e.write_i32(9093);
 
@@ -100,11 +109,10 @@ fn encode_metadata_response(_api_version: i16, body: Bytes, top_level_error_code
             top_level_error_code
         });
         e.write_nullable_string(Some("unknown-topic"));
-        e.write_i32(0); // partitions array count
+        e.write_i32(0); // empty partitions array
     }
 
-    // v1 includes controller_id after topic metadata
-    e.write_i32(1);
+    e.write_i32(1); // controller_id
     e.freeze()
 }
 
@@ -115,8 +123,6 @@ fn encode_error_only_response(error_code: i16) -> Bytes {
 }
 
 pub fn split_metadata_request_topics(body: Bytes) -> usize {
-    // Used in tests to validate decode boundary behavior for future handlers.
-    // Schema for baseline request versions begins with array length of topics.
     let mut d = Decoder::new(body);
     d.read_i32().unwrap_or_default().max(0) as usize
 }

@@ -32,3 +32,86 @@ fn decoder_returns_underflow_error() {
     let err = dec.read_i32().expect_err("must fail");
     assert!(err.to_string().contains("buffer underflow"));
 }
+
+#[test]
+fn codec_u8_and_bool() {
+    let mut enc = Encoder::with_capacity(8);
+    enc.write_u8(0xFF);
+    enc.write_bool(true);
+    enc.write_bool(false);
+    let bytes = enc.freeze();
+
+    let mut dec = Decoder::new(bytes);
+    assert_eq!(dec.read_u8().unwrap(), 0xFF);
+    assert!(dec.read_bool().unwrap());
+    assert!(!dec.read_bool().unwrap());
+}
+
+#[test]
+fn varint_round_trip_small_values() {
+    for v in [0u64, 1, 127, 128, 255, 300, 16383, 16384, u32::MAX as u64] {
+        let mut enc = Encoder::with_capacity(16);
+        enc.write_varint(v);
+        let mut dec = Decoder::new(enc.freeze());
+        assert_eq!(dec.read_varint().unwrap(), v, "failed for v={v}");
+    }
+}
+
+#[test]
+fn varint_single_byte_for_values_below_128() {
+    let mut enc = Encoder::with_capacity(1);
+    enc.write_varint(42);
+    let bytes = enc.freeze();
+    assert_eq!(bytes.len(), 1);
+    assert_eq!(bytes[0], 42);
+}
+
+#[test]
+fn varint_two_bytes_for_128() {
+    let mut enc = Encoder::with_capacity(2);
+    enc.write_varint(128);
+    let bytes = enc.freeze();
+    // 128 = 0x80 → first byte 0x80 | 0x80 = 0x80 (continue), second byte 0x01
+    assert_eq!(bytes.as_ref(), &[0x80, 0x01]);
+}
+
+#[test]
+fn compact_nullable_string_round_trip() {
+    let mut enc = Encoder::with_capacity(32);
+    enc.write_compact_nullable_string(Some("hello"));
+    enc.write_compact_nullable_string(None);
+    enc.write_compact_nullable_string(Some(""));
+    let bytes = enc.freeze();
+
+    let mut dec = Decoder::new(bytes);
+    assert_eq!(dec.read_compact_nullable_string().unwrap().as_deref(), Some("hello"));
+    assert_eq!(dec.read_compact_nullable_string().unwrap(), None);
+    assert_eq!(dec.read_compact_nullable_string().unwrap().as_deref(), Some(""));
+}
+
+#[test]
+fn compact_nullable_bytes_round_trip() {
+    let mut enc = Encoder::with_capacity(32);
+    enc.write_compact_nullable_bytes(Some(&[10, 20, 30]));
+    enc.write_compact_nullable_bytes(None);
+    let bytes = enc.freeze();
+
+    let mut dec = Decoder::new(bytes);
+    assert_eq!(dec.read_compact_nullable_bytes().unwrap().unwrap(), Bytes::from_static(&[10, 20, 30]));
+    assert_eq!(dec.read_compact_nullable_bytes().unwrap(), None);
+}
+
+#[test]
+fn tagged_fields_empty_section_round_trip() {
+    let mut enc = Encoder::with_capacity(8);
+    enc.write_i32(42);
+    enc.write_empty_tagged_fields();
+    enc.write_i16(7);
+    let bytes = enc.freeze();
+
+    let mut dec = Decoder::new(bytes);
+    assert_eq!(dec.read_i32().unwrap(), 42);
+    dec.read_tagged_fields().unwrap(); // should consume the single 0x00 byte
+    assert_eq!(dec.read_i16().unwrap(), 7);
+    assert_eq!(dec.remaining(), 0);
+}

@@ -227,7 +227,8 @@ fn build_payload(api_key: i16, version: i16) -> Result<Bytes> {
             };
             let mut rb = BytesMut::new();
             RecordBatchEncoder::encode(&mut rb, [rec].iter(),
-                &RecordEncodeOptions { version: 2, compression: Compression::None })
+                &RecordEncodeOptions { version: 2, compression: Compression::None },
+                None::<fn(&mut BytesMut, &mut BytesMut, Compression) -> anyhow::Result<()>>)
                 .context("RecordBatch encode")?;
             let pd = TopicProduceData::default()
                 .with_name(TopicName::from(StrBytes::from_static_str("test-topic")))
@@ -378,7 +379,7 @@ fn build_payload(api_key: i16, version: i16) -> Result<Bytes> {
                 .with_name(TopicName::from(StrBytes::from_static_str("test-topic")))
                 .with_partitions(vec![0i32]);
             AddPartitionsToTxnRequest::default()
-                .with_v3_and_below_transactional_id(StrBytes::from_static_str("test-txn"))
+                .with_v3_and_below_transactional_id(TransactionalId(StrBytes::from_static_str("test-txn")))
                 .with_v3_and_below_producer_id(ProducerId(100))
                 .with_v3_and_below_producer_epoch(1)
                 .with_v3_and_below_topics(vec![t])
@@ -386,14 +387,14 @@ fn build_payload(api_key: i16, version: i16) -> Result<Bytes> {
         }
         25 => {
             AddOffsetsToTxnRequest::default()
-                .with_transactional_id(StrBytes::from_static_str("test-txn"))
+                .with_transactional_id(TransactionalId(StrBytes::from_static_str("test-txn")))
                 .with_producer_id(ProducerId(100)).with_producer_epoch(1)
                 .with_group_id(GroupId::from(StrBytes::from_static_str("test-group")))
                 .encode(&mut buf, version).context("AddOffsetsToTxn")?;
         }
         26 => {
             EndTxnRequest::default()
-                .with_transactional_id(StrBytes::from_static_str("test-txn"))
+                .with_transactional_id(TransactionalId(StrBytes::from_static_str("test-txn")))
                 .with_producer_id(ProducerId(100)).with_producer_epoch(1).with_committed(true)
                 .encode(&mut buf, version).context("EndTxn")?;
         }
@@ -406,7 +407,7 @@ fn build_payload(api_key: i16, version: i16) -> Result<Bytes> {
                 .with_name(TopicName::from(StrBytes::from_static_str("test-topic")))
                 .with_partitions(vec![p]);
             TxnOffsetCommitRequest::default()
-                .with_transactional_id(StrBytes::from_static_str("test-txn"))
+                .with_transactional_id(TransactionalId(StrBytes::from_static_str("test-txn")))
                 .with_group_id(GroupId::from(StrBytes::from_static_str("test-group")))
                 .with_producer_id(ProducerId(100)).with_producer_epoch(1).with_topics(vec![t])
                 .encode(&mut buf, version).context("TxnOffsetCommit")?;

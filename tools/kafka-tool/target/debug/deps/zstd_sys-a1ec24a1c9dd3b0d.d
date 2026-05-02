@@ -1,0 +1,9 @@
+/Users/raviyerraguntla/IdeaProjects/iggy_supporting_kafka/tools/kafka-tool/target/debug/deps/zstd_sys-a1ec24a1c9dd3b0d.d: /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/lib.rs /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/bindings_zstd.rs /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/bindings_zdict.rs
+
+/Users/raviyerraguntla/IdeaProjects/iggy_supporting_kafka/tools/kafka-tool/target/debug/deps/libzstd_sys-a1ec24a1c9dd3b0d.rlib: /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/lib.rs /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/bindings_zstd.rs /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/bindings_zdict.rs
+
+/Users/raviyerraguntla/IdeaProjects/iggy_supporting_kafka/tools/kafka-tool/target/debug/deps/libzstd_sys-a1ec24a1c9dd3b0d.rmeta: /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/lib.rs /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/bindings_zstd.rs /Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/bindings_zdict.rs
+
+/Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/lib.rs:
+/Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/bindings_zstd.rs:
+/Users/raviyerraguntla/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/src/bindings_zdict.rs:

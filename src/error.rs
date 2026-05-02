@@ -10,6 +10,8 @@ pub enum KafkaProtocolError {
     FrameTooLarge { max_bytes: usize, actual_bytes: usize },
     #[error("invalid utf8 string")]
     InvalidUtf8,
+    #[error("varint overflows 64 bits")]
+    InvalidVarint,
     #[error("unsupported request header version: {0}")]
     UnsupportedHeaderVersion(i16),
     #[error("io error: {0}")]

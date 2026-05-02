@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(cargo tree *)",
+      "Bash(rustup show *)",
+      "Bash(rustup update *)",
+      "Bash(mkdir -p /Users/raviyerraguntla/IdeaProjects/iggy_supporting_kafka/tools/kafka-tool/kafka_messages)",
+      "Bash(cargo +nightly-aarch64-apple-darwin run -- generate --output ./kafka_messages/)",
+      "Bash(cargo search *)",
+      "Bash(cargo +nightly-aarch64-apple-darwin *)",
+      "Bash(cargo run *)",
+      "Bash(cargo test *)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "Bash(timeout 2 ./target/debug/iggy_supporting_kafka)",
+      "Bash(gtimeout 2 ./target/debug/iggy_supporting_kafka)",
+      "Bash(kill 45190)",
+      "Bash(cargo build *)"
+    ]
+  }
+}

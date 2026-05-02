@@ -10,7 +10,7 @@ keywords = ["kafka", "protocol", "testing", "iggy", "wire-format"]
 
 [dependencies]
 kafka-protocol = "0.13"
-bytes = "1"
+bytes = ">=1, <1.10"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

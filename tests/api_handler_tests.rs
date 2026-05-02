@@ -1,37 +1,66 @@
 use bytes::Bytes;
 
 use iggy_supporting_kafka::protocol::api::{
-    handle_request, is_supported_version, split_metadata_request_topics, supported_api_ranges, API_KEY_API_VERSIONS,
-    API_KEY_METADATA, ERROR_UNSUPPORTED_VERSION,
+    handle_request, is_supported_version, split_metadata_request_topics, supported_api_ranges,
+    API_KEY_API_VERSIONS, API_KEY_METADATA, ERROR_UNSUPPORTED_VERSION,
 };
 use iggy_supporting_kafka::protocol::codec::Decoder;
 
+// ── ApiVersions ─────────────────────────────────────────────────────────────
+
 #[test]
-fn api_versions_response_contains_supported_ranges() {
-    let body = handle_request(API_KEY_API_VERSIONS, 3, Bytes::new());
+fn api_versions_v1_response_non_flexible_format() {
+    let body = handle_request(API_KEY_API_VERSIONS, 1, Bytes::new());
     let mut d = Decoder::new(body);
 
-    let error_code = d.read_i16().unwrap();
-    assert_eq!(error_code, 0);
+    assert_eq!(d.read_i16().unwrap(), 0); // error_code
 
+    // Non-flexible: i32 array count
     let count = d.read_i32().unwrap();
     assert!(count >= 2);
-
     let mut keys = Vec::new();
     for _ in 0..count {
-        let key = d.read_i16().unwrap();
-        let _min = d.read_i16().unwrap();
-        let _max = d.read_i16().unwrap();
-        keys.push(key);
+        keys.push(d.read_i16().unwrap());
+        d.read_i16().unwrap(); // min
+        d.read_i16().unwrap(); // max
     }
-    let throttle = d.read_i32().unwrap();
-    assert_eq!(throttle, 0);
+    assert_eq!(d.read_i32().unwrap(), 0); // throttle_time_ms
 
-    let expected: Vec<i16> = supported_api_ranges().iter().map(|r| r.api_key).collect();
-    for k in expected {
+    let expected_keys: Vec<i16> = supported_api_ranges().iter().map(|r| r.api_key).collect();
+    for k in expected_keys {
         assert!(keys.contains(&k));
     }
 }
+
+#[test]
+fn api_versions_v3_response_flexible_format() {
+    let body = handle_request(API_KEY_API_VERSIONS, 3, Bytes::new());
+    let mut d = Decoder::new(body);
+
+    assert_eq!(d.read_i16().unwrap(), 0); // error_code
+
+    // Flexible: varint(len+1) compact array
+    let count_plus_one = d.read_varint().unwrap();
+    assert!(count_plus_one >= 3); // at least 2 entries → varint = 3+
+    let count = (count_plus_one - 1) as i32;
+
+    let mut keys = Vec::new();
+    for _ in 0..count {
+        keys.push(d.read_i16().unwrap());
+        d.read_i16().unwrap(); // min
+        d.read_i16().unwrap(); // max
+        d.read_tagged_fields().unwrap(); // per-entry tagged fields
+    }
+    assert_eq!(d.read_i32().unwrap(), 0); // throttle_time_ms
+    d.read_tagged_fields().unwrap();      // top-level tagged fields
+
+    let expected_keys: Vec<i16> = supported_api_ranges().iter().map(|r| r.api_key).collect();
+    for k in expected_keys {
+        assert!(keys.contains(&k));
+    }
+}
+
+// ── Metadata ─────────────────────────────────────────────────────────────────
 
 #[test]
 fn metadata_response_has_broker_array_and_topic_array() {
@@ -40,7 +69,6 @@ fn metadata_response_has_broker_array_and_topic_array() {
 
     let broker_count = d.read_i32().unwrap();
     assert_eq!(broker_count, 1);
-
     let node_id = d.read_i32().unwrap();
     assert_eq!(node_id, 1);
     let host = d.read_nullable_string().unwrap().unwrap();
@@ -58,8 +86,7 @@ fn unsupported_version_returns_protocol_error() {
     req.extend_from_slice(&1_i32.to_be_bytes());
     let body = handle_request(API_KEY_METADATA, 99, Bytes::from(req));
     let mut d = Decoder::new(body);
-    let broker_count = d.read_i32().unwrap();
-    assert_eq!(broker_count, 1);
+    let _broker_count = d.read_i32().unwrap();
     let _ = d.read_i32().unwrap();
     let _ = d.read_nullable_string().unwrap();
     let _ = d.read_i32().unwrap();
@@ -74,6 +101,8 @@ fn unsupported_version_returns_protocol_error() {
     let controller_id = d.read_i32().unwrap();
     assert_eq!(controller_id, 1);
 }
+
+// ── Misc ────────────────────────────────────────────────────────────────────
 
 #[test]
 fn unknown_api_key_returns_error_only_payload() {

@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use tracing::{error, info, warn};
 use crate::error::{KafkaProtocolError, Result};
 use crate::protocol::api::handle_request;
 use crate::protocol::codec::Decoder;
-use crate::protocol::header::{RequestHeader, ResponseHeader};
+use crate::protocol::header::{request_header_version, response_header_version, RequestHeader, ResponseHeader};
 
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -38,9 +39,7 @@ pub struct KafkaServer {
 
 impl KafkaServer {
     pub fn new(config: ServerConfig) -> Self {
-        Self {
-            config: Arc::new(config),
-        }
+        Self { config: Arc::new(config) }
     }
 
     pub async fn run(self, mut shutdown: broadcast::Receiver<()>) -> Result<()> {
@@ -57,8 +56,8 @@ impl KafkaServer {
                     let (stream, peer) = accept_result?;
                     let cfg = Arc::clone(&self.config);
                     tokio::spawn(async move {
-                        if let Err(err) = handle_connection(stream, cfg).await {
-                            warn!("connection {peer} closed with error: {err}");
+                        if let Err(err) = handle_connection(stream, cfg, peer).await {
+                            warn!(%peer, "connection closed with error: {err}");
                         }
                     });
                 }
@@ -68,26 +67,58 @@ impl KafkaServer {
     }
 }
 
-async fn handle_connection(mut stream: TcpStream, config: Arc<ServerConfig>) -> Result<()> {
+async fn handle_connection(
+    mut stream: TcpStream,
+    config: Arc<ServerConfig>,
+    peer: SocketAddr,
+) -> Result<()> {
+    info!(%peer, "connection accepted");
+
     loop {
-        let frame = read_frame(&mut stream, config.max_frame_size, config.read_timeout).await?;
+        let frame = match read_frame(&mut stream, config.max_frame_size, config.read_timeout).await {
+            Ok(f) => f,
+            // Clean client disconnect — not an error worth warning about.
+            Err(KafkaProtocolError::Io(ref e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof
+                    || e.kind() == std::io::ErrorKind::ConnectionReset =>
+            {
+                info!(%peer, "connection closed by client");
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
+
+        // Peek the first 4 bytes (api_key + api_version) to select the correct header
+        // version before handing the frame to the decoder.
+        if frame.len() < 4 {
+            return Err(KafkaProtocolError::BufferUnderflow {
+                needed: 4,
+                remaining: frame.len(),
+            });
+        }
+        let api_key     = i16::from_be_bytes([frame[0], frame[1]]);
+        let api_version = i16::from_be_bytes([frame[2], frame[3]]);
+        let req_hdr_ver  = request_header_version(api_key, api_version);
+        let resp_hdr_ver = response_header_version(api_key, api_version);
+
         let mut decoder = Decoder::new(frame);
-        let req = RequestHeader::decode_from(&mut decoder, 1)?;
+        let req = RequestHeader::decode_from(&mut decoder, req_hdr_ver)?;
         info!(
+            %peer,
             api_key = req.api_key,
             api_version = req.api_version,
             correlation_id = req.correlation_id,
             client_id = req.client_id.as_deref().unwrap_or(""),
-            "received kafka request header"
+            "received request"
         );
 
         let body = decoder.read_bytes(decoder.remaining())?;
         let body_response = handle_request(req.api_key, req.api_version, body);
-        let resp_header = ResponseHeader {
-            correlation_id: req.correlation_id,
-        };
-        let mut payload = BytesMut::with_capacity(4 + body_response.len());
-        payload.put_slice(&resp_header.encode(0));
+
+        let resp_header = ResponseHeader { correlation_id: req.correlation_id };
+        let encoded_header = resp_header.encode(resp_hdr_ver);
+        let mut payload = BytesMut::with_capacity(encoded_header.len() + body_response.len());
+        payload.put_slice(&encoded_header);
         payload.put_slice(&body_response);
 
         write_frame(&mut stream, &payload, config.write_timeout).await?;
@@ -124,7 +155,11 @@ pub async fn read_frame(
     Ok(bytes::Bytes::from(data))
 }
 
-pub async fn write_frame(stream: &mut TcpStream, payload: &[u8], write_timeout: Duration) -> Result<()> {
+pub async fn write_frame(
+    stream: &mut TcpStream,
+    payload: &[u8],
+    write_timeout: Duration,
+) -> Result<()> {
     let len = payload.len();
     if len > i32::MAX as usize {
         return Err(KafkaProtocolError::FrameTooLarge {
@@ -132,7 +167,6 @@ pub async fn write_frame(stream: &mut TcpStream, payload: &[u8], write_timeout: 
             actual_bytes: len,
         });
     }
-
     let mut frame = BytesMut::with_capacity(4 + len);
     frame.put_i32(len as i32);
     frame.extend_from_slice(payload);
@@ -143,8 +177,10 @@ pub async fn write_frame(stream: &mut TcpStream, payload: &[u8], write_timeout: 
 }
 
 pub fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(filter)
         .try_init()
         .map_err(|e| error!("failed to initialize tracing: {e}"));
 }
