@@ -16,6 +16,8 @@ pub enum KafkaProtocolError {
     UnsupportedHeaderVersion(i16),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("iggy error: {0}")]
+    Iggy(#[from] iggy::prelude::IggyError),
 }
 
 pub type Result<T> = std::result::Result<T, KafkaProtocolError>;

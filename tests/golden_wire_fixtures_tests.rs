@@ -7,12 +7,23 @@ use iggy_supporting_kafka::protocol::codec::Encoder;
 fn golden_apiversions_v1_response_fixture() {
     let actual = handle_request(API_KEY_API_VERSIONS, 1, Bytes::new());
 
-    // error_code=0, api_count=2, (18,0,3), (3,0,1), throttle=0
-    let expected: [u8; 22] = [
-        0x00, 0x00, // error_code
-        0x00, 0x00, 0x00, 0x02, // api count
-        0x00, 0x12, 0x00, 0x00, 0x00, 0x03, // key 18 range
-        0x00, 0x03, 0x00, 0x00, 0x00, 0x01, // key 3 range
+    // error_code=0, api_count=6
+    // key 0  (Produce)      min=3  max=9
+    // key 1  (Fetch)        min=4  max=12
+    // key 2  (ListOffsets)  min=1  max=6
+    // key 3  (Metadata)     min=0  max=9
+    // key 18 (ApiVersions)  min=0  max=3
+    // key 19 (CreateTopics) min=2  max=5
+    // throttle_ms=0
+    let expected: [u8; 46] = [
+        0x00, 0x00,             // error_code
+        0x00, 0x00, 0x00, 0x06, // api count = 6
+        0x00, 0x00, 0x00, 0x03, 0x00, 0x09, // key 0:  Produce      3–9
+        0x00, 0x01, 0x00, 0x04, 0x00, 0x0C, // key 1:  Fetch        4–12
+        0x00, 0x02, 0x00, 0x01, 0x00, 0x06, // key 2:  ListOffsets  1–6
+        0x00, 0x03, 0x00, 0x00, 0x00, 0x09, // key 3:  Metadata     0–9
+        0x00, 0x12, 0x00, 0x00, 0x00, 0x03, // key 18: ApiVersions  0–3
+        0x00, 0x13, 0x00, 0x02, 0x00, 0x05, // key 19: CreateTopics 2–5
         0x00, 0x00, 0x00, 0x00, // throttle_ms
     ];
     assert_eq!(actual.as_ref(), &expected);

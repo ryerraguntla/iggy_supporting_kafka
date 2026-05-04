@@ -10,7 +10,8 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::error::{KafkaProtocolError, Result};
-use crate::protocol::api::handle_request;
+use crate::iggy_bridge::IggyBridge;
+use crate::protocol::api::{handle_request, handle_request_with_iggy};
 use crate::protocol::codec::Decoder;
 use crate::protocol::header::{request_header_version, response_header_version, RequestHeader, ResponseHeader};
 
@@ -35,17 +36,24 @@ impl Default for ServerConfig {
 
 pub struct KafkaServer {
     config: Arc<ServerConfig>,
+    iggy_bridge: Option<Arc<IggyBridge>>,
 }
 
 impl KafkaServer {
     pub fn new(config: ServerConfig) -> Self {
-        Self { config: Arc::new(config) }
+        Self { config: Arc::new(config), iggy_bridge: None }
+    }
+
+    pub fn with_iggy(mut self, bridge: IggyBridge) -> Self {
+        self.iggy_bridge = Some(Arc::new(bridge));
+        self
     }
 
     pub async fn run(self, mut shutdown: broadcast::Receiver<()>) -> Result<()> {
         let listener = TcpListener::bind(&self.config.bind_addr).await?;
         info!("kafka listener bound on {}", self.config.bind_addr);
 
+        let iggy = self.iggy_bridge;
         loop {
             tokio::select! {
                 _ = shutdown.recv() => {
@@ -55,8 +63,9 @@ impl KafkaServer {
                 accept_result = listener.accept() => {
                     let (stream, peer) = accept_result?;
                     let cfg = Arc::clone(&self.config);
+                    let bridge = iggy.clone();
                     tokio::spawn(async move {
-                        if let Err(err) = handle_connection(stream, cfg, peer).await {
+                        if let Err(err) = handle_connection(stream, cfg, peer, bridge).await {
                             warn!(%peer, "connection closed with error: {err}");
                         }
                     });
@@ -71,6 +80,7 @@ async fn handle_connection(
     mut stream: TcpStream,
     config: Arc<ServerConfig>,
     peer: SocketAddr,
+    iggy_bridge: Option<Arc<IggyBridge>>,
 ) -> Result<()> {
     info!(%peer, "connection accepted");
 
@@ -113,7 +123,11 @@ async fn handle_connection(
         );
 
         let body = decoder.read_bytes(decoder.remaining())?;
-        let body_response = handle_request(req.api_key, req.api_version, body);
+        let body_response = if let Some(bridge) = &iggy_bridge {
+            handle_request_with_iggy(req.api_key, req.api_version, body, bridge).await
+        } else {
+            handle_request(req.api_key, req.api_version, body)
+        };
 
         let resp_header = ResponseHeader { correlation_id: req.correlation_id };
         let encoded_header = resp_header.encode(resp_hdr_ver);
