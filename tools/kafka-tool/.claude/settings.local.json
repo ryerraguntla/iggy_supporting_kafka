@@ -17,7 +17,27 @@
       "Bash(timeout 2 ./target/debug/iggy_supporting_kafka)",
       "Bash(gtimeout 2 ./target/debug/iggy_supporting_kafka)",
       "Bash(kill 45190)",
-      "Bash(cargo build *)"
+      "Bash(cargo build *)",
+      "Bash(python3 *)",
+      "Bash(docker --version)",
+      "Bash(docker info *)",
+      "WebSearch",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:iggy.apache.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:rust.testcontainers.org)",
+      "WebFetch(domain:hub.docker.com)",
+      "Bash(docker pull *)",
+      "Bash(cargo add *)",
+      "Bash(docker run *)",
+      "Read(//private/tmp/iggy_api_probe/**)",
+      "Bash(mkdir -p src)",
+      "Bash(cat)",
+      "Bash(cargo check *)",
+      "Bash(cargo doc *)",
+      "Read(//Users/raviyerraguntla/.cargo/registry/src/**)",
+      "Bash(find ~/.cargo/registry/src/index.crates.io-*/iggy_common-*/ -name \"*.rs\")"
     ]
   }
 }
